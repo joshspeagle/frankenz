@@ -1,0 +1,9 @@
+u LSST_u.dat
+g LSST_g.dat
+r LSST_r.dat
+i LSST_i.dat
+z LSST_z.dat
+Y LSST_y.dat
+Y2 euclid_y.dat
+J2 euclid_j.dat
+H2 euclid_h.dat

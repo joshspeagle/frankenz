@@ -1,0 +1,12 @@
+uv castor_uv.res
+u_castor castor_u.res
+g_castor castor_g.res
+U u_DEcam.res
+G g_DEcam.res
+R r_DEcam.res
+I i_DEcam.res
+Z z_DEcam.res
+Y y_DEcam.res
+Yw Y.res
+Jw J.res
+Hw H.res
