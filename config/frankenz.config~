@@ -1,0 +1,10 @@
+##### INPUTS #####
+HOME: /Users/Josh/Dropbox/GitHub/frankenz/ # FRANKEN-Z installation directory
+FILTER_PATH: /Users/Josh/Dropbox/GitHub/frankenz/filters/ # location of filter files
+FILTERS: filters/HSC.list # list of filter transmission curve files
+
+##### CONFIG FILES #####
+CONFIG_KNN: config/knn.config # FRRF config file
+CONFIG_REDSHIFT: config/redshift.config # redshift dictionary config file
+CONFIG_MAG: config/mag.config # magnitude dictionary config file
+CONFIG_COLOR: config/color.config # color dictionary config file

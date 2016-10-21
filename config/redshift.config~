@@ -1,0 +1,13 @@
+##### REDSHIFT GRID (FITTING) #####
+ZMIN: 0.0 # minimum redshift bound
+ZMAX: 7.0 # maximum redshift bound
+DLZ: 0.01 # dlog(1+z) spacing
+RES: 10.0 # increase in resolution used during fitting
+N_DICT: 100. # number of Gaussian kernels used in dictionary
+
+##### REDSHIFT GRID (OUTPUT) #####
+ZMIN_OUT: 0.0 # minimum redshift bound
+ZMAX_OUT: 6.0 # maximum redshift bound
+DZ_OUT: 0.01 # dz spacing
+RES_OUT: 10.0 # increase in resolution used to compute confidence intervals
+
