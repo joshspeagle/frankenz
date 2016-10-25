@@ -109,11 +109,10 @@ def loglikelihood(data, data_var, data_mask, models, models_var, models_mask):
     resid=data-models # residuals
     tot_var=data_var+models_var # combined variance
     tot_mask=data_mask*models_mask # combined binary mask
-    tot_norm=(tot_var*tot_mask).sum(axis=1) # Gaussian likelihood normalization
     Nbands=tot_mask.sum(axis=1) # number of bands
     
     chi2=(tot_mask*resid*resid/tot_var).sum(axis=1) # compute standard chi2
-    chi2_mod=chi2+Nbands*l2pi+log(tot_norm) # add appropriate normalizations
+    chi2_mod=chi2-Nbands # normalize by expected value to correct for missing bands
     
     return chi2_mod, Nbands
 
@@ -137,6 +136,7 @@ def loglikelihood_s(data, data_var, data_mask, models, models_var, models_mask):
     chi2_a -- maximum-likelihood model 'shapefactor' (i.e. quadratic term)
     Nbands -- total number of bands used in likelihood calculation
     """
+    ##### THIS NEEDS FIXING #####
     
     # derive scalefactors between data and models
     inter_vals=(models*data[None,:]/data_var[None,:]).sum(axis=1) # interaction term
@@ -570,132 +570,166 @@ def pdf_kde_dict(ydict, ywidth, y_pos, y_idx, y_wt, pdf_grid, delta_grid, Ngrid,
 ########### WINBET ###############
 
 
-def impute_winbet(phot, var, masks, X, Xe, Xdict, ll_func=loglikelihood, Nleaf=10, Ntrees=100, impute_type='mean'):
+class WINBET():
     """
-    Impute missing values using Weighted Inference with Naive Bayes and Extra Trees (WINBET).
+    The Weighted Inference with Naive Bayes and Extra Trees (WINBET) class. 
 
-    Keyword arguments:
-    phot -- measured fluxes
-    var -- measured flux variances
-    masks -- flux masks (training/testing)
-    X -- transformed features
-    Xe -- transformed feature errors
-    Xdict -- feature dictionary
-    ll_func -- log-likelihood function (default: loglikelihood)
-    Nleaf -- minimum number of objects per leaf
-    Ntrees -- number of trees in ensemble
-    impute_type -- {'mean','random'} (default: 'mean')
-
-    Outputs:
-    phot_impute -- measured and imputed fluxes
-    var_impute -- measured and imputed flux errors
+    Functions: 
+    train -- train the trees
+    impute -- generates missing photometric predictions
     """
 
-    # initialize stuff
-    Nobj,Nf=len(phot),len(phot[0]) # number of objects/filters
-    censor_sel=arange(Nobj)[(masks.sum(axis=1)<Nf)] # indices of objects with censored (missing) data
-    Ncensor=len(censor_sel) # number of censored objects
-    csel=[(masks[:,i]==False) for i in xrange(Nf)] # mask slice in relevant dimension
-    Nfill=[csel[i].sum() for i in xrange(Nf)] # number of censored mags to be filled in
-
-    pcensor=empty((Nobj,Nf)) # inferred photometry
-    vcensor=empty((Nobj,Nf)) # inferred errors
-
-    # fill in missing features with arbitrary values
-    Xt=copy(X)
-    Xet=copy(Xe)
-    Xt[masks==False]=1.
-    Xet[masks==False]=1.
     
-    # discretize features along dictionary
-    Xidx,Xeidx=Xdict.fit(Xt,Xet)
+    def __init__(self, Ntrees=100, Nleaf=10):
+        """
+        Initializes the instance. 
+
+        Keyword arguments:
+        N_members -- number of members in ensemble
+        See sklearn.neighbors.NearestNeighbors for a description of additional keyword arguments and their defaults.
+        """
+
+        # establish baseline model
+        self.NTREES=Ntrees # number of trees
+        self.NLEAF=Nleaf # minimum number of objects per leaf
+        self.lf=tree.ExtraTreeRegressor(min_samples_leaf=self.NLEAF)
+
+    def train(self, phot, var, masks, X, Xe, Xdict):
+        """
+        Train underlying trees using Naive Bayes and Extra Trees.
+
+        Keyword arguments:
+        phot -- measured fluxes
+        var -- measured flux variances
+        masks -- flux masks
+        X -- transformed features
+        Xe -- transformed feature errors
+        Xdict -- feature dictionary
+        """
+
+        # initialize stuff
+        self.NOBJ,self.NFILT=len(phot),len(phot[0]) # number of objects/filters
+        self.censor_sel=arange(self.NOBJ)[(masks.sum(axis=1)<self.NFILT)] # indices of objects with censored (missing) data
+        self.NCENSOR=len(self.censor_sel) # number of censored objects
+        self.csel=[(masks[:,i]==False) for i in xrange(self.NFILT)] # mask slice in relevant dimension
+        self.NFILL=[self.csel[i].sum() for i in xrange(self.NFILT)] # number of censored mags to be filled in
+
+        self.phot=copy(phot)
+        self.var=copy(var)
+        self.masks=copy(masks)
+
+        # fill in missing features with arbitrary values
+        Xt=copy(X)
+        Xet=copy(Xe)
+        Xt[masks==False]=1.
+        Xet[masks==False]=1.
+    
+        # discretize features along dictionary
+        Xidx,Xeidx=Xdict.fit(Xt,Xet)
 
     
-    # construct Naive Bayes priors
-    X_pdf=array([pdf_kde_dict(Xdict.sig_dict,Xdict.sig_width,Xidx[:,i],Xeidx[:,i],masks[:,i].astype(int),Xdict.grid,Xdict.delta,Xdict.Ngrid) for i in xrange(Nf)]) # feature PDF
-    X_cdf=X_pdf.cumsum(axis=1)/X_pdf.sum(axis=1)[:,None] # compute CDF
-    Xcdf=[unique(X_cdf[i]) for i in xrange(Nf)] # select unique elements
-    Xcdf_grid=[Xdict.grid[unique(X_cdf[i],return_index=True)[1]] for i in xrange(Nf)] # select corresponding unique grid elements
+        # construct Naive Bayes priors
+        X_pdf=array([pdf_kde_dict(Xdict.sig_dict,Xdict.sig_width,Xidx[:,i],Xeidx[:,i],masks[:,i].astype(int),Xdict.grid,Xdict.delta,Xdict.Ngrid) for i in xrange(self.NFILT)]) # feature PDF
+        X_cdf=X_pdf.cumsum(axis=1)/X_pdf.sum(axis=1)[:,None] # compute CDF
+        self.Xcdf=[unique(X_cdf[i]) for i in xrange(self.NFILT)] # select unique elements
+        self.Xcdf_grid=[Xdict.grid[unique(X_cdf[i],return_index=True)[1]] for i in xrange(self.NFILT)] # select corresponding unique grid elements
 
     
-    # initialize Extra Tree Regressor
-    lf=tree.ExtraTreeRegressor(min_samples_leaf=Nleaf)
-    test_indices=[[] for i in xrange(Ncensor)] # collection of neighbors for each object
+        # initialize Extra Tree Regressor
+        self.test_indices=[[] for i in xrange(self.NCENSOR)] # collection of neighbors for each object
 
-    # gather neighbors
-    for counter in xrange(Ntrees):
-        sys.stdout.write(str(counter)+' ')
+        # gather neighbors
+        for counter in xrange(self.NTREES):
+            sys.stdout.write(str(counter)+' ')
 
-        # generate new fluxes (training)
-        X_filled=normal(Xt,Xet) # perturb features
-        for i in xrange(Nf):
-            Xfill=interp(random.uniform(size=Nfill[i]),Xcdf[i],Xcdf_grid[i]) # draw from CDF
-            X_filled[csel[i],i]=Xfill # impute censored fluxes
+            # generate new fluxes (training)
+            X_filled=normal(Xt,Xet) # perturb features
+            for i in xrange(self.NFILT):
+                Xfill=interp(random.uniform(size=self.NFILL[i]),self.Xcdf[i],self.Xcdf_grid[i]) # draw from CDF
+                X_filled[self.csel[i],i]=Xfill # impute censored fluxes
 
-        # train tree
-        lf.fit(X_filled,X_filled) # fit data
-        idx=lf.apply(X_filled) # map training data leaf indices
-        tree_idx=[[] for i in xrange(max(idx)+1)] # tree-structured object list
-        for i in xrange(len(idx)):
-            tree_idx[idx[i]].append(i) # add object to tree-indexed list
+            # train tree
+            self.lf.fit(X_filled,X_filled) # fit data
+            idx=self.lf.apply(X_filled) # map training data leaf indices
+            tree_idx=[[] for i in xrange(max(idx)+1)] # tree-structured object list
+            for i in xrange(len(idx)):
+                tree_idx[idx[i]].append(i) # add object to tree-indexed list
 
-        # generate new fluxes (testing)
-        X_filled=normal(Xt,Xet) # perturb features
-        for i in xrange(Nf):
-            Xfill=interp(random.uniform(size=Nfill[i]),Xcdf[i],Xcdf_grid[i]) # draw from CDF
-            X_filled[csel[i],i]=Xfill # impute censored fluxes
+            # generate new fluxes (testing)
+            X_filled=normal(Xt,Xet) # perturb features
+            for i in xrange(self.NFILT):
+                Xfill=interp(random.uniform(size=self.NFILL[i]),self.Xcdf[i],self.Xcdf_grid[i]) # draw from CDF
+                X_filled[self.csel[i],i]=Xfill # impute censored fluxes
 
-        # query objects with censored fluxes
-        tidx=lf.apply(X_filled[censor_sel]) 
-        for i in xrange(Ncensor):
-            test_indices[i].append(tree_idx[tidx[i]]) # add leaf neighbors to object-indexed list  
+            # query objects with censored fluxes
+            tidx=self.lf.apply(X_filled[self.censor_sel]) 
+            for i in xrange(self.NCENSOR):
+                self.test_indices[i].append(tree_idx[tidx[i]]) # add leaf neighbors to object-indexed list  
 
 
-    # compute likelihood-weighted estimates for fluxes, errors
-    for obj in xrange(Ncensor):
-        if obj%500==0: sys.stdout.write(str(obj)+' ')
+    def impute(self, phot, var, masks, impute_type='random', ll_func=loglikelihood):
+        """
+        Impute missing photometry.
 
-        idx=censor_sel[obj] # object index
+        Keyword arguments:
+        phot -- measured fluxes (same as train)
+        var -- measured flux variances (same as train)
+        masks -- flux masks (same as train)
+        impute_type -- 'mean' or 'random'
+        ll_func -- loglikelihood function (default: loglikelihood)
 
-        tidx=pandas.unique([i for j in test_indices[obj] for i in j]) # derive unique list of neighbors
-        ptemp=phot[tidx] # phot subset
-        vtemp=var[tidx] # var subset
-        mtemp=masks[tidx] # mask subset
+        Outputs:
+        phot_impute -- filled photometric data
+        var_impute -- filled variance data
+        """
 
-        # derive likelihoods
-        ll,nbands=ll_func(phot[idx],var[idx],masks[idx],ptemp,vtemp,mtemp)
+        pcensor=empty((self.NOBJ,self.NFILT))
+        vcensor=empty((self.NOBJ,self.NFILT))
 
-        # derive dimension-specific collections of weights and photometry
-        mtemp=[mtemp[:,i]&(nbands>0) for i in xrange(Nf)] # band-specific masks
-        ptemp=[ptemp[:,i][mtemp[i]] for i in xrange(Nf)] # band-specific phot
-        vtemp=[vtemp[:,i][mtemp[i]] for i in xrange(Nf)] # band-specific var
-        lltemp=[ll[mtemp[i]] for i in xrange(Nf)] # band-specific log-likelihoods
-        wtemp=[exp(-0.5*(lltemp[i]-lltemp[i].min())) for i in xrange(Nf)] # band-specific weights
+        # compute likelihood-weighted estimates for fluxes, errors
+        for obj in xrange(self.NCENSOR):
+            if obj%500==0: sys.stdout.write(str(obj)+' ')
 
-        if impute_type=='mean':
-            # compute expected photometry
-            p1=array([average(ptemp[i],weights=wtemp[i]) for i in xrange(Nf)]) # mean phot (first moment): E(X)
-            p2=array([average(square(ptemp[i]),weights=wtemp[i]) for i in xrange(Nf)]) # second moment: E(X^2)
-            v1_i=p2-square(p1) # variance imputed phot: V(X)=E(X^2)-E^2(X)
-            v1_m=array([average(vtemp[i],weights=wtemp[i]) for i in xrange(Nf)]) # mean measured variance: E(Xe^2)
-            v_eff=v1_i+v1_m # effective error: observed variance and mean variance in quadrature sqrt([E(Xe^2)+V(X)])
-            pcensor[idx]=p1 # fill in photometry
-            vcensor[idx]=v_eff # fill in photometry
+            idx=self.censor_sel[obj] # object index
 
-        if impute_type=='random':
-            # generate random sample
-            ## FIX THIS (NEED TO RUN FOR EACH BAND TO AVOID CHEATING)
-            choice_idx=[choice(tidx[mtemp[i]],p=wtemp[i]/wtemp[i].sum()) for i in xrange(Nf)]
-            pcensor[idx]=phot[choice_idx,xrange(Nf)]
-            vcensor[idx]=var[choice_idx,xrange(Nf)]
+            tidx=pandas.unique([i for j in self.test_indices[obj] for i in j]) # derive unique list of neighbors
+            ptemp=phot[tidx] # phot subset
+            vtemp=var[tidx] # var subset
+            mtemp=masks[tidx] # mask subset
 
-    # fill in photometry
-    phot_impute=copy(phot)
-    var_impute=copy(var)
-    phot_impute[masks==False]=pcensor[masks==False]
-    var_impute[masks==False]=vcensor[masks==False]
+            # derive likelihoods
+            ll,nbands=ll_func(phot[idx],var[idx],masks[idx],ptemp,vtemp,mtemp)
+
+            # derive dimension-specific collections of weights and photometry
+            mtemp=[mtemp[:,i]&(nbands>0) for i in xrange(self.NFILT)] # band-specific masks
+            ptemp=[ptemp[:,i][mtemp[i]] for i in xrange(self.NFILT)] # band-specific phot
+            vtemp=[vtemp[:,i][mtemp[i]] for i in xrange(self.NFILT)] # band-specific var
+            lltemp=[ll[mtemp[i]] for i in xrange(self.NFILT)] # band-specific log-likelihoods
+            wtemp=[exp(-0.5*(lltemp[i]-lltemp[i].min())) for i in xrange(self.NFILT)] # band-specific weights
+
+            if impute_type=='mean':
+                # compute expected photometry
+                p1=array([average(ptemp[i],weights=wtemp[i]) for i in xrange(self.NFILT)]) # mean phot (first moment): E(X)
+                p2=array([average(square(ptemp[i]),weights=wtemp[i]) for i in xrange(self.NFILT)]) # second moment: E(X^2)
+                v1_i=p2-square(p1) # variance imputed phot: V(X)=E(X^2)-E^2(X)
+                v1_m=array([average(vtemp[i],weights=wtemp[i]) for i in xrange(self.NFILT)]) # mean measured variance: E(Xe^2)
+                v_eff=v1_i+v1_m # effective error: observed variance and mean variance in quadrature sqrt([E(Xe^2)+V(X)])
+                pcensor[idx]=p1 # fill in photometry
+                vcensor[idx]=v_eff # fill in photometry
+
+            if impute_type=='random':
+                # generate random sample
+                choice_idx=[choice(tidx[mtemp[i]],p=wtemp[i]/wtemp[i].sum()) for i in xrange(self.NFILT)]
+                pcensor[idx]=phot[choice_idx,xrange(self.NFILT)]
+                vcensor[idx]=var[choice_idx,xrange(self.NFILT)]
+
+        # fill in photometry
+        phot_impute=copy(phot)
+        var_impute=copy(var)
+        phot_impute[masks==False]=pcensor[masks==False]
+        var_impute[masks==False]=vcensor[masks==False]
     
-    return phot_impute,var_impute
+        return phot_impute,var_impute
 
 
 
@@ -729,7 +763,7 @@ class FRANKENZ():
 
 
 
-    def predict(self, phot, err, masks, phot_test, err_test, masks_test, f_func=asinh_mag_map, ll_func=loglikelihood):
+    def predict(self, phot, err, masks, phot_test, err_test, masks_test, f_func=asinh_mag_map, ll_func=loglikelihood, impute_train=None, impute_test=None):
         """
         Generate Full Regression over Associated Neighbors with Kernel dENsity redshift (FRANKEN-Z) PDFs.
         Objects in the training set to be fit (i.e. regressed over) are selected from kd-trees based on a set of transformed FEATURES.
@@ -767,12 +801,20 @@ class FRANKENZ():
             sys.stderr.write(str(i)+' ')
 
             # train kd-trees
-            phot_t=normal(phot,err).astype('float32') # perturb fluxes
+            if impute_train is not None:
+                phot_t,var_t=impute_train.impute(phot,var,masks,impute_type='random')
+                phot_t=normal(phot_t,sqrt(var_t))
+            else:
+                phot_t=normal(phot,err).astype('float32') # perturb fluxes
             X_t=f_func(phot_t,err)[0] # map to feature space
             knn=base.clone(self.knn).fit(X_t) # train kd-tree
 
             # query kd-trees
-            phot_test_t=normal(phot_test,err_test).astype('float32') # perturb fluxes
+            if impute_test is not None:
+                phot_test_t,var_test_t=impute_test.impute(phot_test,var_test,masks_test,impute_type='random')
+                phot_test_t=normal(phot_test_t,sqrt(var_test_t))
+            else:
+                phot_test_t=normal(phot_test,err_test).astype('float32') # perturb fluxes
             X_test_t=f_func(phot_test_t,err_test)[0] # map to feature space
             model_indices[i]=knn.kneighbors(X_test_t,return_distance=False) # find neighbors
 
@@ -784,8 +826,7 @@ class FRANKENZ():
             model_Nobj[i]=Nidx
 
             # compute log-likelihoods and Nbands
-            model_ll[i][:Nidx]=ll_func(phot_test[i],var_test[i],ones(Nf),phot[midx_unique],var[midx_unique],ones((Nidx,Nf)))[0]
-            model_Nbands[i][:Nidx]=(masks_test[i]*masks[midx_unique]).sum(axis=1)
+            model_ll[i][:Nidx],model_Nbands[i][:Nidx]=ll_func(phot_test[i],var_test[i],masks_test[i],phot[midx_unique],var[midx_unique],masks[midx_unique])
 
             if i%5000==0: 
                 sys.stderr.write(str(i)+' ') # counter
@@ -1813,3 +1854,40 @@ def plot_dpdfstack(filt, zpdf, zgrid, z, p_idx, pe_idx, pdict, pparams, pname, s
 
 
 
+####### OLD FUNCTIONS ######
+"""
+def loglikelihood(data, data_var, data_mask, models, models_var, models_mask):
+
+    # compute ln(likelihood)
+    resid=data-models # residuals
+    tot_var=data_var+models_var # combined variance
+    tot_mask=data_mask*models_mask # combined binary mask
+    tot_norm=(tot_var*tot_mask).sum(axis=1) # Gaussian likelihood normalization
+    Nbands=tot_mask.sum(axis=1) # number of bands
+    
+    chi2=(tot_mask*resid*resid/tot_var).sum(axis=1) # compute standard chi2
+    chi2_mod=chi2+Nbands*l2pi+log(tot_norm) # add appropriate normalizations
+    
+    return chi2_mod, Nbands
+
+
+
+def loglikelihood_s(data, data_var, data_mask, models, models_var, models_mask):
+    
+    # derive scalefactors between data and models
+    inter_vals=(models*data[None,:]/data_var[None,:]).sum(axis=1) # interaction term
+    shape_vals=(models*models/data_var[None,:]).sum(axis=1) # model-dependent term (i.e. quadratic 'steepness' of chi2)
+    scale_vals=inter_vals/shape_vals # maximum-likelihood scalefactors
+    mod_norm=shape_vals*scale_vals*scale_vals # associated normalization contribution to likelihood
+
+    # compute ln(likelihood)
+    resid=data-scale_vals[:,None]*models # compute scaled residuals
+    tot_mask=data_mask*models_mask # combined binary mask
+    data_norm=(data_var*tot_mask).sum(axis=1) # Gaussian likelihood normalization
+    Nbands=tot_mask.sum(axis=1) # number of bands
+    
+    chi2=(tot_mask*resid*resid/data_var[None,:]).sum(axis=1) # compute chi2
+    chi2_mod=chi2+log(data_norm*mod_norm)+(Nbands-1)*l2pi # add appropriate normalizations
+    
+    return chi2_mod, Nbands #, scale_vals, shape_vals
+"""
