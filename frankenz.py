@@ -105,14 +105,14 @@ def loglikelihood(data, data_var, data_mask, models, models_var, models_mask):
     Nbands -- total number of bands used in likelihood calculation
     """
 
-    # compute ln(likelihood)
-    resid=data-models # residuals
     tot_var=data_var+models_var # combined variance
     tot_mask=data_mask*models_mask # combined binary mask
     Nbands=tot_mask.sum(axis=1) # number of bands
-    
+
+    # compute ln(likelihood)    
+    resid=data-models # residuals
     chi2=(tot_mask*resid*resid/tot_var).sum(axis=1) # compute standard chi2
-    chi2_mod=chi2-Nbands # normalize by expected value to correct for missing bands
+    chi2_mod=chi2-Nbands # normalize by E[chi2(N)]
     
     return chi2_mod, Nbands
 
@@ -136,24 +136,22 @@ def loglikelihood_s(data, data_var, data_mask, models, models_var, models_mask):
     chi2_a -- maximum-likelihood model 'shapefactor' (i.e. quadratic term)
     Nbands -- total number of bands used in likelihood calculation
     """
-    ##### THIS NEEDS FIXING #####
+
+    tot_mask=data_mask*models_mask # combined binary mask
+    Nbands=tot_mask.sum(axis=1) # number of bands
     
     # derive scalefactors between data and models
-    inter_vals=(models*data[None,:]/data_var[None,:]).sum(axis=1) # interaction term
-    shape_vals=(models*models/data_var[None,:]).sum(axis=1) # model-dependent term (i.e. quadratic 'steepness' of chi2)
+    inter_vals=(tot_masks*models*data[None,:]/data_var[None,:]).sum(axis=1) # interaction term
+    shape_vals=(tot_masks*models*models/data_var[None,:]).sum(axis=1) # model-dependent term (i.e. quadratic 'steepness' of chi2)
     scale_vals=inter_vals/shape_vals # maximum-likelihood scalefactors
-    mod_norm=shape_vals*scale_vals*scale_vals # associated normalization contribution to likelihood
 
     # compute ln(likelihood)
     resid=data-scale_vals[:,None]*models # compute scaled residuals
-    tot_mask=data_mask*models_mask # combined binary mask
-    data_norm=(data_var*tot_mask).sum(axis=1) # Gaussian likelihood normalization
-    Nbands=tot_mask.sum(axis=1) # number of bands
     
     chi2=(tot_mask*resid*resid/data_var[None,:]).sum(axis=1) # compute chi2
-    chi2_mod=chi2+log(data_norm*mod_norm)+(Nbands-1)*l2pi # add appropriate normalizations
+    chi2_mod=chi2-(Nbands-1) # normalize by E[chi2(N-1)]
     
-    return chi2_mod, Nbands #, scale_vals, shape_vals
+    return chi2_mod, Nbands
 
 
 
