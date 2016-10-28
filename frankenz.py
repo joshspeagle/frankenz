@@ -141,8 +141,8 @@ def loglikelihood_s(data, data_var, data_mask, models, models_var, models_mask):
     Nbands=tot_mask.sum(axis=1) # number of bands
     
     # derive scalefactors between data and models
-    inter_vals=(tot_masks*models*data[None,:]/data_var[None,:]).sum(axis=1) # interaction term
-    shape_vals=(tot_masks*models*models/data_var[None,:]).sum(axis=1) # model-dependent term (i.e. quadratic 'steepness' of chi2)
+    inter_vals=(tot_mask*models*data[None,:]/data_var[None,:]).sum(axis=1) # interaction term
+    shape_vals=(tot_mask*models*models/data_var[None,:]).sum(axis=1) # model-dependent term (i.e. quadratic 'steepness' of chi2)
     scale_vals=inter_vals/shape_vals # maximum-likelihood scalefactors
 
     # compute ln(likelihood)
@@ -364,22 +364,22 @@ def pdfs_resample(target_grid, target_pdfs, new_grid):
     resampled PDFs
     """
     
-    sys.stderr.write("Resampling PDFs...")
+    sys.stdout.write("Resampling PDFs...")
     
     Nobj,Npoints=len(target_pdfs),len(new_grid) # grab size of inputs
     new_pdfs=zeros((Nobj,Npoints)) # create new array
     for i in xrange(Nobj):
-        if i%5000==0: sys.stderr.write(str(i)+" ")
+        if i%5000==0: sys.stdout.write(str(i)+" ")
         new_pdfs[i]=interp(new_grid,target_grid,target_pdfs[i]) # interpolate PDF
         new_pdfs[i]/=sum(new_pdfs[i]) # re-normalize
         
-    sys.stderr.write("done!\n")
+    sys.stdout.write("done!\n")
 
     return new_pdfs
 
 
 
-def pdfs_summary_statistics(target_grid, target_pdfs, conf_width=0.03, deg_spline='linear'):
+def pdfs_summary_statistics(target_grid, target_pdfs, conf_width=0.03):
     """
     Compute a range of summary statistics from the input PDFs.
 
@@ -387,7 +387,6 @@ def pdfs_summary_statistics(target_grid, target_pdfs, conf_width=0.03, deg_splin
     target_grid -- input grid
     target_pdfs -- input collection of PDFs
     conf_width -- redshift range used to establish the 'zConf' flag (see Carrasco Kind & Brunner 2013) 
-    deg_spline -- order of spline fit 
 
     Outputs:
     pdf_mean, pdf_med, pdf_mode, pdf_l68, pdf_h68, pdf_l95, pdf_h95, pdf_std, pdf_conf
@@ -404,7 +403,6 @@ def pdfs_summary_statistics(target_grid, target_pdfs, conf_width=0.03, deg_splin
 
     # initialize variables
     Ntest=len(target_pdfs) # number of input pdfs
-    grid_fine=arange(target_grid[0],target_grid[-1]+res/2.,res) # resampled grid
     
     pdf_mean=zeros(Ntest,dtype='float32') # mean (first moment)
     pdf_std=zeros(Ntest,dtype='float32') # standard deviation (sqrt of normalized second moment)
@@ -427,10 +425,10 @@ def pdfs_summary_statistics(target_grid, target_pdfs, conf_width=0.03, deg_splin
     u2=m+i2/2 # upper 2
 
     
-    sys.stderr.write("Computing PDF quantities...")
+    sys.stdout.write("Computing PDF quantities...")
     
     for i in xrange(Ntest):
-        if i%5000==0: sys.stderr.write(str(i)+" ")
+        if i%5000==0: sys.stdout.write(str(i)+" ")
         
         # mean quantities
         pdf_mean[i]=dot(target_pdfs[i],target_grid)
@@ -441,14 +439,14 @@ def pdfs_summary_statistics(target_grid, target_pdfs, conf_width=0.03, deg_splin
         
         # cumulative distribution function
         cdf=cumsum(target_pdfs[i]) # original CDF (normalized to 1)
-        pdf_med[i],pdf_h68[i],pdf_l68[i],pdf_h95[i],pdf_l95[i]=interp([m,u1,l1,u2,l2],target_grid,cdf) # median quantities
+        pdf_med[i],pdf_h68[i],pdf_l68[i],pdf_h95[i],pdf_l95[i]=interp([m,u1,l1,u2,l2],cdf,target_grid) # median quantities
         
         # confidence flag
         conf_range=conf_width*(1+pdf_med[i]) # redshift integration range
         conf_high,conf_low=interp([pdf_med[i]+conf_range,pdf_med[i]-conf_range],target_grid,cdf) # high/low CDF values
         pdf_conf[i]=conf_high-conf_low # zConf
         
-    sys.stderr.write("done!\n")
+    sys.stdout.write("done!\n")
 
     return pdf_mean, pdf_med, pdf_mode, pdf_l68, pdf_h68, pdf_l95, pdf_h95, pdf_std, pdf_conf
 
@@ -761,7 +759,7 @@ class FRANKENZ():
 
 
 
-    def predict(self, phot, err, masks, phot_test, err_test, masks_test, f_func=asinh_mag_map, ll_func=loglikelihood, impute_train=None, impute_test=None):
+    def predict(self, phot, err, masks, phot_test, err_test, masks_test, f_func=asinh_mag_map, ll_func=loglikelihood, impute_train=None, impute_test=None, subsample=None):
         """
         Generate Full Regression over Associated Neighbors with Kernel dENsity redshift (FRANKEN-Z) PDFs.
         Objects in the training set to be fit (i.e. regressed over) are selected from kd-trees based on a set of transformed FEATURES.
@@ -796,8 +794,13 @@ class FRANKENZ():
 
         # find nearest neighbors
         for i in xrange(self.NMEMBERS):
-            sys.stderr.write(str(i)+' ')
+            sys.stdout.write(str(i)+' ')
 
+            if subsample is not None:
+                feature_idx=choice(Nf,size=subsample,replace=False)
+            else:
+                feature_idx=xrange(Nf)
+                
             # train kd-trees
             if impute_train is not None:
                 phot_t,var_t=impute_train.impute(phot,var,masks,impute_type='random')
@@ -805,7 +808,7 @@ class FRANKENZ():
             else:
                 phot_t=normal(phot,err).astype('float32') # perturb fluxes
             X_t=f_func(phot_t,err)[0] # map to feature space
-            knn=base.clone(self.knn).fit(X_t) # train kd-tree
+            knn=base.clone(self.knn).fit(X_t[:,feature_idx]) # train kd-tree
 
             # query kd-trees
             if impute_test is not None:
@@ -814,7 +817,7 @@ class FRANKENZ():
             else:
                 phot_test_t=normal(phot_test,err_test).astype('float32') # perturb fluxes
             X_test_t=f_func(phot_test_t,err_test)[0] # map to feature space
-            model_indices[i]=knn.kneighbors(X_test_t,return_distance=False) # find neighbors
+            model_indices[i]=knn.kneighbors(X_test_t[:,feature_idx],return_distance=False) # find neighbors
 
         # select/compute log-likelihoods to unique subset of neighbors
         for i in xrange(Ntest):
@@ -827,10 +830,10 @@ class FRANKENZ():
             model_ll[i][:Nidx],model_Nbands[i][:Nidx]=ll_func(phot_test[i],var_test[i],masks_test[i],phot[midx_unique],var[midx_unique],masks[midx_unique])
 
             if i%5000==0: 
-                sys.stderr.write(str(i)+' ') # counter
+                sys.stdout.write(str(i)+' ') # counter
                 gc.collect() # garbage collect
     
-        sys.stderr.write('done!\n')
+        sys.stdout.write('done!\n')
 
         return model_objects,model_Nobj,model_ll,model_Nbands
 
@@ -1050,7 +1053,9 @@ class RedshiftDict():
         """
         lz_idx=((lz-self.lzgrid_highres[0])/self.dlz_highres).round().astype('int')
         lze_idx=((lze-self.lze_grid[0])/self.dlze).round().astype('int')
-
+        lze_idx[lze_idx>=len(self.lze_grid)]=len(self.lze_grid)-1 # impose error ceiling
+        lze_idx[lze_idx<0]=0. # impose error floor
+        
         return lz_idx,lze_idx
 
 
@@ -1536,7 +1541,7 @@ def plot_zpoints(plot_title, y, yp, markersize=1.5, limits=[0,6], binwidth=0.05,
     cmap=get_cmap('jet')
     cmap.set_bad('white')
 
-    success_sel=(isnan(yp)|(yp<=0))==False # NaNs and z<=0 are counted as failures
+    success_sel=isfinite(yp)&(yp>0)
 
     if weights is not None:
         weights=weights
@@ -1589,7 +1594,7 @@ def plot_zpoints(plot_title, y, yp, markersize=1.5, limits=[0,6], binwidth=0.05,
     text(1.2*(limits[1]/5.0),4.5*(limits[1]/5.0),"$\Delta z^\prime$ (mean): "+str(round(score[0][2],4)*100)+"%",fontsize=18,color='black')
     text(1.2*(limits[1]/5.0),4.3*(limits[1]/5.0),"$\Delta z^\prime$ (med): "+str(round(score[1][2],4)*100)+"%",fontsize=18,color='black')
     text(1.2*(limits[1]/5.0),4.1*(limits[1]/5.0),"$\sigma_{\Delta z^\prime}$ (MAD): "+str(round(score[1][3],4)*100)+"%",fontsize=18,color='black')
-    text(1.2*(limits[1]/5.0),3.9*(limits[1]/5.0),"$f_{cat}$: "+str(round(score[4],4)*100)+"%",fontsize=18,color='black')
+    text(1.2*(limits[1]/5.0),3.9*(limits[1]/5.0),"$f_{cat}$: "+str(round(score[2],4)*100)+"%",fontsize=18,color='black')
 
     # miscallaneous
     xlabel('Input')
@@ -1638,7 +1643,7 @@ def plot_zpdfstack(filt, zpdf, zgrid, lz_idx, lze_idx, rdict, sel=None, weights=
     # compute stack
     count=0
     for i in arange(Nobj)[sel]:
-        if count%5000==0: sys.stderr.write(str(count)+' ')
+        if count%5000==0: sys.stdout.write(str(count)+' ')
         count+=1
         tzpdf=zpdf[i] # redshift pdf
         tsel=tzpdf>max(tzpdf)*pdf_thresh # probability threshold cut
@@ -1717,7 +1722,7 @@ def plot_pdfstack(filt, zpdf, zgrid, p_idx, pe_idx, pdict, pparams, pname, sel=N
     # compute stack
     count=0
     for i in arange(Nobj)[sel]:
-        if count%5000==0: sys.stderr.write(str(count)+' ')
+        if count%5000==0: sys.stdout.write(str(count)+' ')
         count+=1
         tzpdf=zpdf[i] # redshift pdf
         tsel=tzpdf>max(tzpdf)*pdf_thresh # probability threshold cut
@@ -1796,7 +1801,7 @@ def plot_dpdfstack(filt, zpdf, zgrid, z, p_idx, pe_idx, pdict, pparams, pname, s
 
     count=0
     for i in arange(Nobj)[sel]:
-        if count%5000==0: sys.stderr.write(str(count)+' ')
+        if count%5000==0: sys.stdout.write(str(count)+' ')
         count+=1
         tzpdf=zpdf[i]
         tsel=tzpdf>max(tzpdf)*pdf_thresh # probability threshold cut
