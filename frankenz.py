@@ -141,8 +141,8 @@ def loglikelihood_s(data, data_var, data_mask, models, models_var, models_mask):
     Nbands=tot_mask.sum(axis=1) # number of bands
     
     # derive scalefactors between data and models
-    inter_vals=(tot_mask*models*data[None,:]/data_var[None,:]).sum(axis=1) # interaction term
-    shape_vals=(tot_mask*models*models/data_var[None,:]).sum(axis=1) # model-dependent term (i.e. quadratic 'steepness' of chi2)
+    inter_vals=(tot_masks*models*data[None,:]/data_var[None,:]).sum(axis=1) # interaction term
+    shape_vals=(tot_masks*models*models/data_var[None,:]).sum(axis=1) # model-dependent term (i.e. quadratic 'steepness' of chi2)
     scale_vals=inter_vals/shape_vals # maximum-likelihood scalefactors
 
     # compute ln(likelihood)
@@ -364,22 +364,22 @@ def pdfs_resample(target_grid, target_pdfs, new_grid):
     resampled PDFs
     """
     
-    sys.stdout.write("Resampling PDFs...")
+    sys.stderr.write("Resampling PDFs...")
     
     Nobj,Npoints=len(target_pdfs),len(new_grid) # grab size of inputs
     new_pdfs=zeros((Nobj,Npoints)) # create new array
     for i in xrange(Nobj):
-        if i%5000==0: sys.stdout.write(str(i)+" ")
+        if i%5000==0: sys.stderr.write(str(i)+" ")
         new_pdfs[i]=interp(new_grid,target_grid,target_pdfs[i]) # interpolate PDF
         new_pdfs[i]/=sum(new_pdfs[i]) # re-normalize
         
-    sys.stdout.write("done!\n")
+    sys.stderr.write("done!\n")
 
     return new_pdfs
 
 
 
-def pdfs_summary_statistics(target_grid, target_pdfs, conf_width=0.03):
+def pdfs_summary_statistics(target_grid, target_pdfs, conf_width=0.03, deg_spline='linear'):
     """
     Compute a range of summary statistics from the input PDFs.
 
@@ -387,6 +387,7 @@ def pdfs_summary_statistics(target_grid, target_pdfs, conf_width=0.03):
     target_grid -- input grid
     target_pdfs -- input collection of PDFs
     conf_width -- redshift range used to establish the 'zConf' flag (see Carrasco Kind & Brunner 2013) 
+    deg_spline -- order of spline fit 
 
     Outputs:
     pdf_mean, pdf_med, pdf_mode, pdf_l68, pdf_h68, pdf_l95, pdf_h95, pdf_std, pdf_conf
@@ -403,6 +404,7 @@ def pdfs_summary_statistics(target_grid, target_pdfs, conf_width=0.03):
 
     # initialize variables
     Ntest=len(target_pdfs) # number of input pdfs
+    grid_fine=arange(target_grid[0],target_grid[-1]+res/2.,res) # resampled grid
     
     pdf_mean=zeros(Ntest,dtype='float32') # mean (first moment)
     pdf_std=zeros(Ntest,dtype='float32') # standard deviation (sqrt of normalized second moment)
@@ -425,10 +427,10 @@ def pdfs_summary_statistics(target_grid, target_pdfs, conf_width=0.03):
     u2=m+i2/2 # upper 2
 
     
-    sys.stdout.write("Computing PDF quantities...")
+    sys.stderr.write("Computing PDF quantities...")
     
     for i in xrange(Ntest):
-        if i%5000==0: sys.stdout.write(str(i)+" ")
+        if i%5000==0: sys.stderr.write(str(i)+" ")
         
         # mean quantities
         pdf_mean[i]=dot(target_pdfs[i],target_grid)
@@ -439,14 +441,14 @@ def pdfs_summary_statistics(target_grid, target_pdfs, conf_width=0.03):
         
         # cumulative distribution function
         cdf=cumsum(target_pdfs[i]) # original CDF (normalized to 1)
-        pdf_med[i],pdf_h68[i],pdf_l68[i],pdf_h95[i],pdf_l95[i]=interp([m,u1,l1,u2,l2],cdf,target_grid) # median quantities
+        pdf_med[i],pdf_h68[i],pdf_l68[i],pdf_h95[i],pdf_l95[i]=interp([m,u1,l1,u2,l2],target_grid,cdf) # median quantities
         
         # confidence flag
         conf_range=conf_width*(1+pdf_med[i]) # redshift integration range
         conf_high,conf_low=interp([pdf_med[i]+conf_range,pdf_med[i]-conf_range],target_grid,cdf) # high/low CDF values
         pdf_conf[i]=conf_high-conf_low # zConf
         
-    sys.stdout.write("done!\n")
+    sys.stderr.write("done!\n")
 
     return pdf_mean, pdf_med, pdf_mode, pdf_l68, pdf_h68, pdf_l95, pdf_h95, pdf_std, pdf_conf
 
@@ -759,7 +761,7 @@ class FRANKENZ():
 
 
 
-    def predict(self, phot, err, masks, phot_test, err_test, masks_test, f_func=asinh_mag_map, ll_func=loglikelihood, impute_train=None, impute_test=None, subsample=None):
+    def predict(self, phot, err, masks, phot_test, err_test, masks_test, f_func=asinh_mag_map, ll_func=loglikelihood, impute_train=None, impute_test=None):
         """
         Generate Full Regression over Associated Neighbors with Kernel dENsity redshift (FRANKEN-Z) PDFs.
         Objects in the training set to be fit (i.e. regressed over) are selected from kd-trees based on a set of transformed FEATURES.
@@ -794,13 +796,8 @@ class FRANKENZ():
 
         # find nearest neighbors
         for i in xrange(self.NMEMBERS):
-            sys.stdout.write(str(i)+' ')
+            sys.stderr.write(str(i)+' ')
 
-            if subsample is not None:
-                feature_idx=choice(Nf,size=subsample,replace=False)
-            else:
-                feature_idx=xrange(Nf)
-                
             # train kd-trees
             if impute_train is not None:
                 phot_t,var_t=impute_train.impute(phot,var,masks,impute_type='random')
@@ -808,7 +805,7 @@ class FRANKENZ():
             else:
                 phot_t=normal(phot,err).astype('float32') # perturb fluxes
             X_t=f_func(phot_t,err)[0] # map to feature space
-            knn=base.clone(self.knn).fit(X_t[:,feature_idx]) # train kd-tree
+            knn=base.clone(self.knn).fit(X_t) # train kd-tree
 
             # query kd-trees
             if impute_test is not None:
@@ -817,7 +814,7 @@ class FRANKENZ():
             else:
                 phot_test_t=normal(phot_test,err_test).astype('float32') # perturb fluxes
             X_test_t=f_func(phot_test_t,err_test)[0] # map to feature space
-            model_indices[i]=knn.kneighbors(X_test_t[:,feature_idx],return_distance=False) # find neighbors
+            model_indices[i]=knn.kneighbors(X_test_t,return_distance=False) # find neighbors
 
         # select/compute log-likelihoods to unique subset of neighbors
         for i in xrange(Ntest):
@@ -830,10 +827,10 @@ class FRANKENZ():
             model_ll[i][:Nidx],model_Nbands[i][:Nidx]=ll_func(phot_test[i],var_test[i],masks_test[i],phot[midx_unique],var[midx_unique],masks[midx_unique])
 
             if i%5000==0: 
-                sys.stdout.write(str(i)+' ') # counter
+                sys.stderr.write(str(i)+' ') # counter
                 gc.collect() # garbage collect
     
-        sys.stdout.write('done!\n')
+        sys.stderr.write('done!\n')
 
         return model_objects,model_Nobj,model_ll,model_Nbands
 
@@ -1053,9 +1050,7 @@ class RedshiftDict():
         """
         lz_idx=((lz-self.lzgrid_highres[0])/self.dlz_highres).round().astype('int')
         lze_idx=((lze-self.lze_grid[0])/self.dlze).round().astype('int')
-        lze_idx[lze_idx>=len(self.lze_grid)]=len(self.lze_grid)-1 # impose error ceiling
-        lze_idx[lze_idx<0]=0. # impose error floor
-        
+
         return lz_idx,lze_idx
 
 
@@ -1117,326 +1112,6 @@ class PDFDict():
 
 
 ################ PLOTTING ################
-
-
-def plot_som(som,weight_var,varname='function',colorscheme='jet',clim=None):
-    """
-    Create a 2D histogram on the SOM of the chosen variable.
-
-    Keyword arguments:
-    som -- SOM instance from class::SOM
-    weight_var -- weight variable for each cell
-    varname -- name of weight variable
-    colorscheme -- chosen colorscheme for plotting
-    clim -- color limits (used in conjunction with colorscheme)
-
-    Outputs: 
-    H -- 2-D (weighted) histogram
-    """
-    
-    H,xedges,yedges=histogram2d(som.position[:,0]+0.5,som.position[:,1]+0.5,bins=[arange(0,som.dimensions[0]+1),arange(0,som.dimensions[1]+1)],weights=weight_var) # 2-D histogram
-
-    H=ma.masked_array(H,mask=(H==0)+isnan(H)) # mask array
-
-    # establish colormap
-    cmap=get_cmap(colorscheme)
-    cmap.set_bad('gray')
-
-    # plot SOM
-    imshow(swapaxes(H,0,1), interpolation='nearest', origin='lower', extent=[xedges[0],xedges[-1],yedges[0],yedges[-1]],cmap=cmap)
-    xlabel('X',color='k',labelpad=12)
-    ylabel('Y',color='k',labelpad=12)
-    cbar=colorbar()
-    cbar.set_label(varname,rotation=270,labelpad=50,color='k')
-    if clim is not None: cbar.set_clim(clim) # color limits
-
-    return H
-
-
-def plot_cell(pos, filt, som, som_map, cat_train, rdict, mdict, cdict, midx=2, cidx=0, sel_list=None, Nresample=10, color_cell='blue', pdfcolor='orange', rparams=[0,6,1.0,0], mparams=[18,26,2.0,0], cparams=[0,2,0.4,0]):
-    """
-    Plot SOM cell contents. Inclues photometric, redshift, magnitude, and color distributions.
-
-    Keyword arguments:
-    pos -- SOM cell position
-    filt -- filter object
-    som -- SOM object
-    som_map -- som_map object
-    cat_train -- training catalog object
-    [x]dict -- dictionary object (r=redshift, m=magnitude, c=color)
-    [x]idx -- multidimensional slice (m=magnitude, c=color)
-    sel_list -- list of boolean selection arrays
-    Nresample -- number of samples to draw from each object's PDF
-    color_cell -- color of the cell model
-    pdfcolor -- color(s) of violin plot PDF
-    [x]params -- parameters for plotting [min, max, delta, smoothing kernel]
-    """
-    
-    # breakdown of plots
-    gs = gridspec.GridSpec(3,3)
-    zmax,mmax,cmax=[],[],[] # maximum bound of plots
-
-    # number of plotting instances
-    Nplot=1
-    if sel_list is not None:
-        Nplot=len(sel_list)
-
-    # 1-D index of position
-    pos_idx=arange(som.Ncell)[product(som.position==pos,axis=1)==1].item()
-
-    # selection of objects that pass initial cuts
-    cell_sel=som_map.obj_flag[som_map.cell_obj[pos_idx]] # selection array
-    cell_obj=som_map.cell_obj[pos_idx][cell_sel] # selected objects
-    cell_prob=(som_map.cell_prob[pos_idx][cell_sel]).astype('double') # associated probability
-    cell_norm=(som_map.cell_norm[pos_idx][cell_sel]).astype('double') # associated normalization
-
-    # cell photometry
-    cell_phot=cat_train.phot[cat_train.flag_train]
-    cell_err=cat_train.err[cat_train.flag_train]
-
-    # SOM cell model
-    sphot=som.cellmodel[pos_idx]
-    snorm=max(sphot)
-
-    # dimensions
-    xmin,xmax=min(filt.lambda_eff),max(filt.lambda_eff)
-    ymin,ymax=-0.2,1.3
-    
-    for count in xrange(Nplot):
-
-        if Nplot > 1:
-            pcolor=pdfcolor[count]
-        else:
-            pcolor=pdfcolor
-
-        # applying additional selection criteria
-        if sel_list is not None:
-            sel=(sel_list[count])[cell_obj]
-            tobj=cell_obj[sel]
-            tprob=cell_prob[sel]
-            tnorm=cell_norm[sel]
-        else:
-            tobj=cell_obj
-            tprob=cell_prob
-            tnorm=cell_norm
-
-        # training photometry in cell
-        tphot=cell_phot[tobj]
-        terr=cell_err[tobj]
-        
-        # resample photometry
-        Nobj=len(tobj)
-        idx_resample=random.choice(Nobj,Nobj*Nresample,p=tprob/sum(tprob))
-        
-        # perturb photometry
-        vals=normal(tphot[idx_resample],terr[idx_resample])
-        vals/=(snorm*tnorm[idx_resample][:,None]) # normalize
-        
-        # plot cell photometry
-        subplot(gs[:2,:])
-        yticks(arange(-10.0,10.0,0.1))
-        plot(filt.lambda_eff,sphot/snorm,'s-',color=color_cell,markersize=15)
-        xlabel('Wavelength [A]',labelpad=15)
-        ylabel('Normalized Flux',labelpad=10)
-        xlim([xmin-0.025*xmax,1.025*xmax])
-        ylim([ymin,ymax])
-        
-        # plot photometric distribution
-        for i in xrange(filt.NFILTER):
-            vt=vals[:,i] # per filter
-            vt_m,vt_s=mean(vt),std(vt) # mean,std
-            violin_parts=violinplot(vt[(vt>=(vt_m-2*vt_s))&(vt<=(vt_m+2*vt_s))],[filt.lambda_eff[i]],widths=600,showmeans=False,showmedians=False,showextrema=False) # violin plot
-            for pc in violin_parts['bodies']: # change color
-                pc.set_facecolor(pcolor)
-                pc.set_edgecolor('black')
-
-        tight_layout()
-
-        # redshift pdf
-        lz_pdf=pdf_kde_wt_dict(rdict.lze_dict,rdict.lze_width,cat_train.lz_idx[cat_train.flag_train][tobj],cat_train.lz_err_idx[cat_train.flag_train][tobj],tprob,rdict.lzgrid_highres,rdict.dlz_highres,rdict.Nz_highres)
-        z_pdf=lz_pdf[rdict.zmin_idx_highres:rdict.zmax_idx_highres:int(rdict.res)]/rdict.znorm
-        zlow,zhigh=argmin(abs(rdict.zgrid-rparams[0])),argmin(abs(rdict.zgrid-rparams[1]))
-        zgrid_temp=rdict.zgrid[zlow:zhigh+1]
-        z_pdf=z_pdf[zlow:zhigh+1]
-        if rparams[-1]>0:
-            z_pdf=sum([z_pdf[i]*gaussian(zgrid_temp[i],rparams[-1]**2,zgrid_temp) for i in xrange(len(zgrid_temp))],axis=0)
-        z_pdf/=trapz(z_pdf,zgrid_temp)
-        zmax.append(max(z_pdf))
-
-        # plot redshift pdf
-        subplot(gs[2,0])
-        xticks(arange(rparams[0],rparams[1]+rparams[2]/2.0,rparams[2]),fontsize=24)
-        yticks([])
-        xlim([rparams[0],rparams[1]])
-        ylim([0,max(zmax)*1.05])
-        plot(zgrid_temp,z_pdf,color='black',lw=0.25)
-        fill_between(zgrid_temp,z_pdf,color=pcolor,alpha=0.7)
-        xlabel('Redshift')
-        tight_layout()
-
-        # mag pdf
-        mag_pdf=pdf_kde_wt_dict(mdict.sig_dict,mdict.sig_width,cat_train.mag_asinh_idx[:,midx][cat_train.flag_train][tobj],cat_train.mag_asinh_err_idx[:,midx][cat_train.flag_train][tobj],tprob,mdict.grid,mdict.delta,mdict.Ngrid)
-        mlow,mhigh=argmin(abs(mdict.grid-mparams[0])),argmin(abs(mdict.grid-mparams[1]))
-        mgrid_temp=mdict.grid[mlow:mhigh+1]
-        mag_pdf=mag_pdf[mlow:mhigh+1]
-        if mparams[-1]>0:
-            mag_pdf=sum([mag_pdf[i]*gaussian(mgrid_temp[i],mparams[-1]**2,mgrid_temp) for i in xrange(len(mgrid_temp))],axis=0)
-        mag_pdf/=trapz(mag_pdf,mgrid_temp)
-        mmax.append(max(mag_pdf))
-
-        # plot mag pdf
-        subplot(gs[2,1])
-        xticks(arange(mparams[0],mparams[1]+mparams[2]/2.0,mparams[2]),fontsize=24)
-        yticks([])
-        xlim([mparams[0],mparams[1]])
-        ylim([0,max(mmax)*1.05])
-        plot(mgrid_temp,mag_pdf,color='black',lw=0.25)
-        fill_between(mgrid_temp,mag_pdf,color=pcolor,alpha=0.7)
-        xlabel('Magnitude ('+filt.filters[midx]+')')
-        tight_layout()
-        
-        # color pdf
-        color_pdf=pdf_kde_wt_dict(cdict.sig_dict,cdict.sig_width,cat_train.color_asinh_idx[:,cidx][cat_train.flag_train][tobj],cat_train.color_asinh_err_idx[:,cidx][cat_train.flag_train][tobj],tprob,cdict.grid,cdict.delta,cdict.Ngrid)
-        clow,chigh=argmin(abs(cdict.grid-cparams[0])),argmin(abs(cdict.grid-cparams[1]))
-        cgrid_temp=cdict.grid[clow:chigh+1]
-        color_pdf=color_pdf[clow:chigh+1]
-        if cparams[-1]>0:
-            color_pdf=sum([color_pdf[i]*gaussian(cgrid_temp[i],cparams[-1]**2,cgrid_temp) for i in xrange(len(cgrid_temp))],axis=0)
-        color_pdf/=trapz(color_pdf,cgrid_temp)
-        cmax.append(max(color_pdf))
-
-        # plot color pdf
-        subplot(gs[2,2])
-        xticks(arange(cparams[0],cparams[1]+cparams[2]/2.0,cparams[2]),fontsize=24)
-        yticks([])
-        xlim([cparams[0],cparams[1]])
-        ylim([0,max(cmax)*1.05])
-        plot(cgrid_temp,color_pdf,color='black',lw=0.25)
-        fill_between(cgrid_temp,color_pdf,color=pcolor,alpha=0.7)
-        xlabel('Color ('+filt.filters[cidx]+'-'+filt.filters[cidx+1]+')')
-        tight_layout()
-
-    # detail cell quantities
-    subplot(gs[:2,:])
-    text(xmin-0.025*xmax+(xmax-xmin)*0.025,ymax-(ymax-ymin)*0.07,str(pos),weight='bold',color=color_cell,fontsize=30)
-    text(xmin-0.025*xmax+(xmax-xmin)*0.025,ymax-(ymax-ymin)*0.15,'P(cell)='+str(round(sum(cell_prob),2)),weight='bold',color='red',fontsize=30)
-    text(xmin-0.025*xmax+(xmax-xmin)*0.025,ymax-(ymax-ymin)*0.23,str(len(cell_prob))+' objects',weight='bold',color='black',fontsize=30)
-    tight_layout()
-
-
-def plot_cell_2dpz(pos, filt, som, som_map, cell_lz_idx, cell_lze_idx, rdict, cell_p_idx, cell_pe_idx, pdict, pname, sel_list=None, rparams=[0,6,1.0], pparams=[18,26,2.0], rnames=None, pdf_thresh=1e-3, boxcar=10):
-    """
-    Plot 2-D SOM cell P(z) vs input parameter dictionary.
-
-    Keyword arguments:
-    pos -- SOM position
-    filt -- filter object
-    som -- SOM object
-    som_map -- som_map object
-    cell_lz_idx -- log(1+z) discretized indices
-    cell_lze_idx -- log(1+z) dictionary indoces
-    rdict -- redshift dictionary
-    cell_p_idx -- parameter discretized indices
-    cell_pe_idx -- parameter dictionary indices
-    pdict -- parameter dictionary
-    pname -- parameter name
-    boxcar -- width (in grid units) of smoothing boxcar
-    See func::plot_cell for additional arguments.
-
-    Ouptuts:
-    2d_stack -- 2-D stacked PDF
-    """
-
-    # define number of plotting instances
-    Nplot=1
-    if sel_list is not None:
-        Nplot=len(sel_list)
-
-    # define breakdown of plots
-    gs = gridspec.GridSpec(Nplot,Nplot)
-
-    # 1-D index of position
-    pos_idx=arange(som.Ncell)[product(som.position==pos,axis=1)==1].item()
-
-    # selection of objects that pass initial cuts
-    cell_sel=som_map.obj_flag[som_map.cell_obj[pos_idx]] # selection array
-    cell_obj=som_map.cell_obj[pos_idx][cell_sel] # selected objects
-    cell_prob=(som_map.cell_prob[pos_idx][cell_sel]).astype('double') # associated probability
-
-    rmean_arr,weight_arr=[],[]
-    
-    for count in xrange(Nplot):
-
-        temp_stack=zeros((pdict.Ngrid,rdict.Nz_highres)) # 2-D P(z) grid
-
-        # applying additional selection criteria
-        if sel_list is not None:
-            sel=(sel_list[count])[cell_obj]
-            tobj=cell_obj[sel]
-            tprob=cell_prob[sel]
-        else:
-            tobj=cell_obj
-            tprob=cell_prob
-
-        # photometry in cell
-        tphot=cell_p_idx[tobj]
-        terr=cell_pe_idx[tobj]
-
-        # redshift in cell
-        tlz=cell_lz_idx[tobj]
-        tlze=cell_lze_idx[tobj]
-
-        # stack multivariate Gaussian
-        for i in xrange(len(tobj)):
-            x_cent,y_cent=tphot[i],tlz[i]
-            x_bound,y_bound=pdict.sig_width[terr[i]],rdict.lze_width[tlze[i]]
-            mvg=outer(pdict.sig_dict[terr[i]],rdict.lze_dict[tlze[i]])*tprob[i]
-            temp_stack[x_cent-x_bound:x_cent+x_bound+1,y_cent-y_bound:y_cent+y_bound+1]+=mvg
-        temp_stack=temp_stack[:,rdict.zmin_idx_highres:rdict.zmax_idx_highres:int(rdict.res)]
-        #temp_stack/=rdict.znorm
-
-        rmean_arr.append(average(rdict.lzgrid,weights=sum(temp_stack,axis=0))) # mean redshift averaged across the whole sample
-        weight_arr.append(sum(tprob))
-        
-        # running median
-        rmed_sliding=zeros(pdict.Ngrid)
-        for i in xrange(pdict.Ngrid):
-            if sum(temp_stack[i,:])==0:
-                rmed_sliding[i]=NaN
-            else:
-                temp=cumsum(temp_stack[i,:])
-                temp/=temp[-1]
-                rmed_sliding[i]=rdict.lzgrid[argmin(abs(temp-0.5))]
-        
-        temp_stack=ma.array(temp_stack,mask=temp_stack<pdf_thresh) # mask array
-
-        # plot 2-D stack
-        subplot(gs[:,count])
-        imshow(temp_stack,origin='lower',extent=(rdict.lzgrid[0],rdict.lzgrid[-1],pdict.grid[0],pdict.grid[-1]),aspect='auto',norm=matplotlib.colors.LogNorm(vmin=None, vmax=None))
-        plot(pdict.grid*0.0+rmean_arr[count],pdict.grid,'r-.',lw=2)
-        plot(convolve(rmed_sliding[isnan(rmed_sliding)==False],ones(boxcar).astype('float')/boxcar,'valid'),convolve(pdict.grid[isnan(rmed_sliding)==False],ones(boxcar).astype('float')/boxcar,'valid'),'k-',lw=2,zorder=10)
-        colorbar(label='PDF')
-        zticks=arange(rparams[0],rparams[1]+rparams[2],rparams[2])
-        lzticks=log(1+zticks)
-        xticks(lzticks,zticks)
-        xlim([lzticks[0],lzticks[-1]])
-        yticks(arange(pparams[0],pparams[1]+pparams[2],pparams[2]))
-        ylim([pparams[0],pparams[1]])
-        if rnames is not None:
-            xlabel(rnames[count])
-        else:
-            xlabel('Redshift')
-        ylabel(pname)
-        title('N_obj='+str(round(sum(tprob),2)),y=1.02)
-        tight_layout()
-
-    # plot mean average across all samples
-    rmean=average(rmean_arr,weights=weight_arr)
-    for count in xrange(Nplot):
-        subplot(gs[:,count])
-        plot(pdict.grid*0.0+rmean,pdict.grid,'r--',lw=3)
-
-    return temp_stack
 
 
 def plot_nz(train_nz,out_nz,zgrid,deltaz,zrange=[0,6],out_nz_draws=None,sample_names=['True','Predicted'],colors=['black','red']):
@@ -1605,12 +1280,11 @@ def plot_zpoints(plot_title, y, yp, markersize=1.5, limits=[0,6], binwidth=0.05,
     return score
 
 
-def plot_zpdfstack(filt, zpdf, zgrid, lz_idx, lze_idx, rdict, sel=None, weights=None, limits=[0,6,1.0], pdf_thresh=1e-3, plot_thresh=1., zres=1e-3, boxcar=1):
+def plot_zpdfstack(zpdf, zgrid, lz_idx, lze_idx, rdict, sel=None, weights=None, limits=[0,6,1.0], pdf_thresh=1e-1, plot_thresh=50., boxcar=1):
     """
     Plot 2-D P(z) vs redshift.
 
     Keyword arguments:
-    filt -- filter object
     zpdf -- redshift PDFs
     zgrid -- redshift grid PDFs are evaluated on
     cell_lz_idx -- log(1+z) discretized indices
@@ -1620,7 +1294,6 @@ def plot_zpdfstack(filt, zpdf, zgrid, lz_idx, lze_idx, rdict, sel=None, weights=
     limits -- [low,high,delta] parameters for plotting
     pdf_thresh -- input to func::pdf_kde_wt_dict
     plot_thresh -- minimum threshold for plotting stacked PDFs
-    zres -- resolution input to func::pdfs_resample
     boxcar -- width of boxcar for smoothing running mean, median, etc.
 
     Outputs:
@@ -1652,13 +1325,13 @@ def plot_zpdfstack(filt, zpdf, zgrid, lz_idx, lze_idx, rdict, sel=None, weights=
         tstack=rdict.lze_dict[x_idx][:,None]*tzpdf[tsel] # 2-D pdf
         temp_stack[x_cent-x_bound:x_cent+x_bound+1,tsel]+=tstack*weights[i] # stack 2-D pdf
 
-    zpoints=pdfs_summary_statistics(zgrid,temp_stack/trapz(temp_stack,zgrid)[:,None],zres) # compute summary statistics
+    zpoints=pdfs_summary_statistics(zgrid,temp_stack/temp_stack.sum(axis=1)[:,None]) # compute summary statistics
     for i in zpoints:
         i[i==zgrid[0]]=NaN
 
     # converting from log to linear space
     temp_stack=temp_stack[rdict.zmin_idx_highres:rdict.zmax_idx_highres:int(rdict.res)]/rdict.znorm[:,None] # reducing resolution
-    prob=interpolate.interp1d(rdict.zgrid,trapz(temp_stack,zgrid))(zgrid) # running pdf
+    prob=interp(zgrid,rdict.zgrid,temp_stack.sum(axis=1)) # running pdf
     temp_stack=swapaxes(pdfs_resample(rdict.zgrid,swapaxes(temp_stack,0,1),zgrid),0,1) # resampling to linear redshift grid
     temp_stack*=prob[None,:] # re-normalizing
     temp_stack=ma.array(temp_stack,mask=temp_stack<plot_thresh) # mask array
@@ -1670,12 +1343,12 @@ def plot_zpdfstack(filt, zpdf, zgrid, lz_idx, lze_idx, rdict, sel=None, weights=
     plot(array([0,100]),array([0,100]),'k--',lw=3) # 1:1 relation
     plot(array([0,100]),array([0,100])*1.15+0.15,'k-.',lw=2) # +15% bound
     plot(array([0,100]),array([0,100])*0.85-0.15,'k-.',lw=2) # -15% bound 
-    plot(convolve(zgrid_highres[isnan(zpoints[0])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[0][isnan(zpoints[0])==False],ones(boxcar)/float(boxcar),'valid'),color='black',lw=2) # mean
+    #plot(convolve(zgrid_highres[isnan(zpoints[0])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[0][isnan(zpoints[0])==False],ones(boxcar)/float(boxcar),'valid'),color='black',lw=2) # mean
     plot(convolve(zgrid_highres[isnan(zpoints[1])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[1][isnan(zpoints[1])==False],ones(boxcar)/float(boxcar),'valid'),color='darkviolet',lw=2) # median
-    plot(convolve(zgrid_highres[isnan(zpoints[3])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[3][isnan(zpoints[3])==False],ones(boxcar)/float(boxcar),'valid'),color='darkviolet',linestyle='--',lw=2) # lower 68% CI
-    plot(convolve(zgrid_highres[isnan(zpoints[4])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[4][isnan(zpoints[4])==False],ones(boxcar)/float(boxcar),'valid'),color='darkviolet',linestyle='--',lw=2) # upper 68% CI
-    plot(convolve(zgrid_highres[isnan(zpoints[5])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[5][isnan(zpoints[5])==False],ones(boxcar)/float(boxcar),'valid'),color='darkviolet',linestyle='-.',lw=2) # lower 95% CI
-    plot(convolve(zgrid_highres[isnan(zpoints[6])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[6][isnan(zpoints[6])==False],ones(boxcar)/float(boxcar),'valid'),color='darkviolet',linestyle='-.',lw=2) # upper 95% CI
+    #plot(convolve(zgrid_highres[isnan(zpoints[3])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[3][isnan(zpoints[3])==False],ones(boxcar)/float(boxcar),'valid'),color='darkviolet',linestyle='--',lw=2) # lower 68% CI
+    #plot(convolve(zgrid_highres[isnan(zpoints[4])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[4][isnan(zpoints[4])==False],ones(boxcar)/float(boxcar),'valid'),color='darkviolet',linestyle='--',lw=2) # upper 68% CI
+    #plot(convolve(zgrid_highres[isnan(zpoints[5])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[5][isnan(zpoints[5])==False],ones(boxcar)/float(boxcar),'valid'),color='darkviolet',linestyle='-.',lw=2) # lower 95% CI
+    #plot(convolve(zgrid_highres[isnan(zpoints[6])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[6][isnan(zpoints[6])==False],ones(boxcar)/float(boxcar),'valid'),color='darkviolet',linestyle='-.',lw=2) # upper 95% CI
     xticks(arange(limits[0],limits[1]+limits[2],limits[2]))
     xlim([limits[0],limits[1]])
     yticks(arange(limits[0],limits[1]+limits[2],limits[2]))
@@ -1687,12 +1360,11 @@ def plot_zpdfstack(filt, zpdf, zgrid, lz_idx, lze_idx, rdict, sel=None, weights=
     return temp_stack,prob,zpoints
 
 
-def plot_pdfstack(filt, zpdf, zgrid, p_idx, pe_idx, pdict, pparams, pname, sel=None, weights=None, yparams=[0,6,1.0], pdf_thresh=1e-3, plot_thresh=1., zres=1e-3, boxcar=1):
+def plot_pdfstack(zpdf, zgrid, p_idx, pe_idx, pdict, pparams, pname, sel=None, weights=None, yparams=[0,6,1.0], pdf_thresh=1e-1, plot_thresh=50., boxcar=1):
     """
     Plot 2-D P(z) vs input parameter dictionary.
 
     Keyword arguments:
-    filt -- filter object
     zpdf -- redshift PDFs
     zgrid -- redshift grid PDFs are evaluated on
     p_idx -- parameter discretized indices
@@ -1734,7 +1406,7 @@ def plot_pdfstack(filt, zpdf, zgrid, p_idx, pe_idx, pdict, pparams, pname, sel=N
     # truncate array
     ylow,yhigh=argmin(abs(pdict.grid-pparams[0])),argmin(abs(pdict.grid-pparams[1]))
     temp_stack=temp_stack[ylow:yhigh+1]
-    zpoints=pdfs_summary_statistics(zgrid,temp_stack/trapz(temp_stack,zgrid)[:,None],zres) # compute summary statistics
+    zpoints=pdfs_summary_statistics(zgrid,temp_stack/temp_stack.sum(axis=1)[:,None]) # compute summary statistics
     for i in zpoints:
         i[i==zgrid[0]]=NaN
 
@@ -1745,12 +1417,12 @@ def plot_pdfstack(filt, zpdf, zgrid, p_idx, pe_idx, pdict, pparams, pname, sel=N
     pgrid=pdict.grid[ylow:yhigh+1]
     imshow(swapaxes(temp_stack,0,1),origin='lower',aspect='auto',norm=matplotlib.colors.LogNorm(vmin=None, vmax=None),extent=(pparams[0],pparams[1],zgrid[0],zgrid[-1]))
     colorbar(label='PDF')
-    plot(convolve(pgrid[isnan(zpoints[0])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[0][isnan(zpoints[0])==False],ones(boxcar)/float(boxcar),'valid'),color='black',lw=2) # mean
+    #plot(convolve(pgrid[isnan(zpoints[0])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[0][isnan(zpoints[0])==False],ones(boxcar)/float(boxcar),'valid'),color='black',lw=2) # mean
     plot(convolve(pgrid[isnan(zpoints[1])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[1][isnan(zpoints[1])==False],ones(boxcar)/float(boxcar),'valid'),color='darkviolet',lw=2) # median
-    plot(convolve(pgrid[isnan(zpoints[3])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[3][isnan(zpoints[3])==False],ones(boxcar)/float(boxcar),'valid'),color='darkviolet',linestyle='--',lw=2) # lower 68% CI
-    plot(convolve(pgrid[isnan(zpoints[4])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[4][isnan(zpoints[4])==False],ones(boxcar)/float(boxcar),'valid'),color='darkviolet',linestyle='--',lw=2) # upper 68% CI
-    plot(convolve(pgrid[isnan(zpoints[5])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[5][isnan(zpoints[5])==False],ones(boxcar)/float(boxcar),'valid'),color='darkviolet',linestyle='-.',lw=2) # lower 95% CI
-    plot(convolve(pgrid[isnan(zpoints[6])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[6][isnan(zpoints[6])==False],ones(boxcar)/float(boxcar),'valid'),color='darkviolet',linestyle='-.',lw=2) # upper 95% CI
+    #plot(convolve(pgrid[isnan(zpoints[3])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[3][isnan(zpoints[3])==False],ones(boxcar)/float(boxcar),'valid'),color='darkviolet',linestyle='--',lw=2) # lower 68% CI
+    #plot(convolve(pgrid[isnan(zpoints[4])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[4][isnan(zpoints[4])==False],ones(boxcar)/float(boxcar),'valid'),color='darkviolet',linestyle='--',lw=2) # upper 68% CI
+    #plot(convolve(pgrid[isnan(zpoints[5])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[5][isnan(zpoints[5])==False],ones(boxcar)/float(boxcar),'valid'),color='darkviolet',linestyle='-.',lw=2) # lower 95% CI
+    #plot(convolve(pgrid[isnan(zpoints[6])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[6][isnan(zpoints[6])==False],ones(boxcar)/float(boxcar),'valid'),color='darkviolet',linestyle='-.',lw=2) # upper 95% CI
     xticks(arange(pparams[0],pparams[1]+pparams[2],pparams[2]))
     xlim([pparams[0],pparams[1]])
     yticks(arange(yparams[0],yparams[1]+yparams[2],yparams[2]))
@@ -1762,12 +1434,11 @@ def plot_pdfstack(filt, zpdf, zgrid, p_idx, pe_idx, pdict, pparams, pname, sel=N
     return temp_stack,prob,zpoints
 
 
-def plot_dpdfstack(filt, zpdf, zgrid, z, p_idx, pe_idx, pdict, pparams, pname, sel=None, weights=None, yparams=[-0.5,0.5,0.1], ybins=[-1.0,1.0,1e-2], pdf_thresh=1e-3, plot_thresh=1., zres=1e-3, boxcar=1):
+def plot_dpdfstack(zpdf, zgrid, z, p_idx, pe_idx, pdict, pparams, pname, sel=None, weights=None, yparams=[-0.5,0.5,0.1], ybins=[-1.0,1.0,1e-2], pdf_thresh=1e-1, plot_thresh=50., boxcar=1):
     """
     Plot 2-D [P(z)-z]/(1+z) (redshift dispersion) vs input parameter dictionary.
 
     Keyword arguments:
-    filt -- filter object
     zpdf -- redshift PDFs
     zgrid -- redshift grid PDFs are evaluated on
     p_idx -- parameter discretized indices
@@ -1815,7 +1486,7 @@ def plot_dpdfstack(filt, zpdf, zgrid, z, p_idx, pe_idx, pdict, pparams, pname, s
     # truncate array
     ylow,yhigh=argmin(abs(pdict.grid-pparams[0])),argmin(abs(pdict.grid-pparams[1]))
     temp_stack=temp_stack[ylow:yhigh+1]
-    zpoints=pdfs_summary_statistics(zdisp_grid,temp_stack/trapz(temp_stack,zdisp_grid)[:,None],zres) # compute summary statistics
+    zpoints=pdfs_summary_statistics(zdisp_grid,temp_stack/temp_stack.sum(axis=1)[:,None]) # compute summary statistics
     for i in zpoints:
         i[i==zdisp_grid[0]]=NaN
 
@@ -1829,12 +1500,12 @@ def plot_dpdfstack(filt, zpdf, zgrid, z, p_idx, pe_idx, pdict, pparams, pname, s
     plot(array([-100,100]),array([0,0]),'k--',lw=3)
     plot(array([-100,100]),[0.15,0.15],'k-.',lw=2)
     plot(array([-100,100]),[-0.15,-0.15],'k-.',lw=2)
-    plot(convolve(pgrid[isnan(zpoints[0])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[0][isnan(zpoints[0])==False],ones(boxcar)/float(boxcar),'valid'),color='black',lw=2) # mean
+    #plot(convolve(pgrid[isnan(zpoints[0])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[0][isnan(zpoints[0])==False],ones(boxcar)/float(boxcar),'valid'),color='black',lw=2) # mean
     plot(convolve(pgrid[isnan(zpoints[1])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[1][isnan(zpoints[1])==False],ones(boxcar)/float(boxcar),'valid'),color='darkviolet',lw=2) # median
-    plot(convolve(pgrid[isnan(zpoints[3])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[3][isnan(zpoints[3])==False],ones(boxcar)/float(boxcar),'valid'),color='darkviolet',linestyle='--',lw=2)
-    plot(convolve(pgrid[isnan(zpoints[4])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[4][isnan(zpoints[4])==False],ones(boxcar)/float(boxcar),'valid'),color='darkviolet',linestyle='--',lw=2)
-    plot(convolve(pgrid[isnan(zpoints[5])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[5][isnan(zpoints[5])==False],ones(boxcar)/float(boxcar),'valid'),color='darkviolet',linestyle='-.',lw=2)
-    plot(convolve(pgrid[isnan(zpoints[6])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[6][isnan(zpoints[6])==False],ones(boxcar)/float(boxcar),'valid'),color='darkviolet',linestyle='-.',lw=2)    
+    #plot(convolve(pgrid[isnan(zpoints[3])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[3][isnan(zpoints[3])==False],ones(boxcar)/float(boxcar),'valid'),color='darkviolet',linestyle='--',lw=2)
+    #plot(convolve(pgrid[isnan(zpoints[4])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[4][isnan(zpoints[4])==False],ones(boxcar)/float(boxcar),'valid'),color='darkviolet',linestyle='--',lw=2)
+    #plot(convolve(pgrid[isnan(zpoints[5])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[5][isnan(zpoints[5])==False],ones(boxcar)/float(boxcar),'valid'),color='darkviolet',linestyle='-.',lw=2)
+    #plot(convolve(pgrid[isnan(zpoints[6])==False],ones(boxcar)/float(boxcar),'valid'),convolve(zpoints[6][isnan(zpoints[6])==False],ones(boxcar)/float(boxcar),'valid'),color='darkviolet',linestyle='-.',lw=2)    
     xticks(arange(pparams[0],pparams[1]+pparams[2],pparams[2]))
     xlim([pparams[0],pparams[1]])
     yticks(arange(yparams[0],yparams[1]+yparams[2],yparams[2]))
@@ -1850,6 +1521,10 @@ def plot_dpdfstack(filt, zpdf, zgrid, z, p_idx, pe_idx, pdict, pparams, pname, s
 
 
 
+<<<<<<< HEAD
+=======
+    success_sel=(isnan(yp)|(yp<=0))==False # NaNs and z<=0 are counted as failures
+>>>>>>> parent of 5ff3c56... fixes/updates
 
 
 
@@ -1861,6 +1536,7 @@ def plot_dpdfstack(filt, zpdf, zgrid, z, p_idx, pe_idx, pdict, pparams, pname, s
 """
 def loglikelihood(data, data_var, data_mask, models, models_var, models_mask):
 
+<<<<<<< HEAD
     # compute ln(likelihood)
     resid=data-models # residuals
     tot_var=data_var+models_var # combined variance
@@ -1872,6 +1548,15 @@ def loglikelihood(data, data_var, data_mask, models, models_var, models_mask):
     chi2_mod=chi2+Nbands*l2pi+log(tot_norm) # add appropriate normalizations
     
     return chi2_mod, Nbands
+=======
+    # statistics
+    Nobj=sum(weights[sel])
+    text(1.2*(limits[1]/5.0),4.7*(limits[1]/5.0),"$N$: "+str(int(Nobj))+" ("+str(round(Nobj*1.0/sum(weights[success_sel]),3))+")",fontsize=18,color='black')
+    text(1.2*(limits[1]/5.0),4.5*(limits[1]/5.0),"$\Delta z^\prime$ (mean): "+str(round(score[0][2],4)*100)+"%",fontsize=18,color='black')
+    text(1.2*(limits[1]/5.0),4.3*(limits[1]/5.0),"$\Delta z^\prime$ (med): "+str(round(score[1][2],4)*100)+"%",fontsize=18,color='black')
+    text(1.2*(limits[1]/5.0),4.1*(limits[1]/5.0),"$\sigma_{\Delta z^\prime}$ (MAD): "+str(round(score[1][3],4)*100)+"%",fontsize=18,color='black')
+    text(1.2*(limits[1]/5.0),3.9*(limits[1]/5.0),"$f_{cat}$: "+str(round(score[4],4)*100)+"%",fontsize=18,color='black')
+>>>>>>> parent of 5ff3c56... fixes/updates
 
 
 
@@ -1893,4 +1578,330 @@ def loglikelihood_s(data, data_var, data_mask, models, models_var, models_mask):
     chi2_mod=chi2+log(data_norm*mod_norm)+(Nbands-1)*l2pi # add appropriate normalizations
     
     return chi2_mod, Nbands #, scale_vals, shape_vals
+
+
+
+def plot_som(som,weight_var,varname='function',colorscheme='jet',clim=None):
+
+    H,xedges,yedges=histogram2d(som.position[:,0]+0.5,som.position[:,1]+0.5,bins=[arange(0,som.dimensions[0]+1),arange(0,som.dimensions[1]+1)],weights=weight_var) # 2-D histogram
+
+    H=ma.masked_array(H,mask=(H==0)+isnan(H)) # mask array
+
+<<<<<<< HEAD
+    # establish colormap
+    cmap=get_cmap(colorscheme)
+    cmap.set_bad('gray')
+=======
+    # compute stack
+    count=0
+    for i in arange(Nobj)[sel]:
+        if count%5000==0: sys.stderr.write(str(count)+' ')
+        count+=1
+        tzpdf=zpdf[i] # redshift pdf
+        tsel=tzpdf>max(tzpdf)*pdf_thresh # probability threshold cut
+        x_idx,x_cent=lze_idx[i],lz_idx[i]
+        x_bound=rdict.lze_width[x_idx] # dictionary entry, location, and width
+        tstack=rdict.lze_dict[x_idx][:,None]*tzpdf[tsel] # 2-D pdf
+        temp_stack[x_cent-x_bound:x_cent+x_bound+1,tsel]+=tstack*weights[i] # stack 2-D pdf
+>>>>>>> parent of 5ff3c56... fixes/updates
+
+    # plot SOM
+    imshow(swapaxes(H,0,1), interpolation='nearest', origin='lower', extent=[xedges[0],xedges[-1],yedges[0],yedges[-1]],cmap=cmap)
+    xlabel('X',color='k',labelpad=12)
+    ylabel('Y',color='k',labelpad=12)
+    cbar=colorbar()
+    cbar.set_label(varname,rotation=270,labelpad=50,color='k')
+    if clim is not None: cbar.set_clim(clim) # color limits
+
+    return H
+
+
+<<<<<<< HEAD
+def plot_cell(pos, filt, som, som_map, cat_train, rdict, mdict, cdict, midx=2, cidx=0, sel_list=None, Nresample=10, color_cell='blue', pdfcolor='orange', rparams=[0,6,1.0,0], mparams=[18,26,2.0,0], cparams=[0,2,0.4,0]):
+    
+    # breakdown of plots
+    gs = gridspec.GridSpec(3,3)
+    zmax,mmax,cmax=[],[],[] # maximum bound of plots
+=======
+    Np,Nz=len(pdict.grid),len(zgrid)
+    Nobj=len(zpdf)
+    temp_stack=zeros((Np,Nz)) # 2-D P(z) grid
+
+    if sel is None:
+        sel=ones(Nobj,dtype='bool')
+
+    if weights is None:
+        weights=ones(Nobj,dtype='float32')
+
+    # compute stack
+    count=0
+    for i in arange(Nobj)[sel]:
+        if count%5000==0: sys.stderr.write(str(count)+' ')
+        count+=1
+        tzpdf=zpdf[i] # redshift pdf
+        tsel=tzpdf>max(tzpdf)*pdf_thresh # probability threshold cut
+        x_idx,x_cent=pe_idx[i],p_idx[i]
+        x_bound=pdict.sig_width[x_idx] # dictionary entry, location, and width
+        tstack=pdict.sig_dict[x_idx][:,None]*tzpdf[tsel] # 2-D pdf
+        temp_stack[x_cent-x_bound:x_cent+x_bound+1,tsel]+=tstack # stack 2-D pdf
+>>>>>>> parent of 5ff3c56... fixes/updates
+
+    # number of plotting instances
+    Nplot=1
+    if sel_list is not None:
+        Nplot=len(sel_list)
+
+    # 1-D index of position
+    pos_idx=arange(som.Ncell)[product(som.position==pos,axis=1)==1].item()
+
+    # selection of objects that pass initial cuts
+    cell_sel=som_map.obj_flag[som_map.cell_obj[pos_idx]] # selection array
+    cell_obj=som_map.cell_obj[pos_idx][cell_sel] # selected objects
+    cell_prob=(som_map.cell_prob[pos_idx][cell_sel]).astype('double') # associated probability
+    cell_norm=(som_map.cell_norm[pos_idx][cell_sel]).astype('double') # associated normalization
+
+    # cell photometry
+    cell_phot=cat_train.phot[cat_train.flag_train]
+    cell_err=cat_train.err[cat_train.flag_train]
+
+    # SOM cell model
+    sphot=som.cellmodel[pos_idx]
+    snorm=max(sphot)
+
+    # dimensions
+    xmin,xmax=min(filt.lambda_eff),max(filt.lambda_eff)
+    ymin,ymax=-0.2,1.3
+    
+    for count in xrange(Nplot):
+
+        if Nplot > 1:
+            pcolor=pdfcolor[count]
+        else:
+            pcolor=pdfcolor
+
+        # applying additional selection criteria
+        if sel_list is not None:
+            sel=(sel_list[count])[cell_obj]
+            tobj=cell_obj[sel]
+            tprob=cell_prob[sel]
+            tnorm=cell_norm[sel]
+        else:
+            tobj=cell_obj
+            tprob=cell_prob
+            tnorm=cell_norm
+
+        # training photometry in cell
+        tphot=cell_phot[tobj]
+        terr=cell_err[tobj]
+        
+        # resample photometry
+        Nobj=len(tobj)
+        idx_resample=random.choice(Nobj,Nobj*Nresample,p=tprob/sum(tprob))
+        
+        # perturb photometry
+        vals=normal(tphot[idx_resample],terr[idx_resample])
+        vals/=(snorm*tnorm[idx_resample][:,None]) # normalize
+        
+        # plot cell photometry
+        subplot(gs[:2,:])
+        yticks(arange(-10.0,10.0,0.1))
+        plot(filt.lambda_eff,sphot/snorm,'s-',color=color_cell,markersize=15)
+        xlabel('Wavelength [A]',labelpad=15)
+        ylabel('Normalized Flux',labelpad=10)
+        xlim([xmin-0.025*xmax,1.025*xmax])
+        ylim([ymin,ymax])
+        
+        # plot photometric distribution
+        for i in xrange(filt.NFILTER):
+            vt=vals[:,i] # per filter
+            vt_m,vt_s=mean(vt),std(vt) # mean,std
+            violin_parts=violinplot(vt[(vt>=(vt_m-2*vt_s))&(vt<=(vt_m+2*vt_s))],[filt.lambda_eff[i]],widths=600,showmeans=False,showmedians=False,showextrema=False) # violin plot
+            for pc in violin_parts['bodies']: # change color
+                pc.set_facecolor(pcolor)
+                pc.set_edgecolor('black')
+
+        tight_layout()
+
+        # redshift pdf
+        lz_pdf=pdf_kde_wt_dict(rdict.lze_dict,rdict.lze_width,cat_train.lz_idx[cat_train.flag_train][tobj],cat_train.lz_err_idx[cat_train.flag_train][tobj],tprob,rdict.lzgrid_highres,rdict.dlz_highres,rdict.Nz_highres)
+        z_pdf=lz_pdf[rdict.zmin_idx_highres:rdict.zmax_idx_highres:int(rdict.res)]/rdict.znorm
+        zlow,zhigh=argmin(abs(rdict.zgrid-rparams[0])),argmin(abs(rdict.zgrid-rparams[1]))
+        zgrid_temp=rdict.zgrid[zlow:zhigh+1]
+        z_pdf=z_pdf[zlow:zhigh+1]
+        if rparams[-1]>0:
+            z_pdf=sum([z_pdf[i]*gaussian(zgrid_temp[i],rparams[-1]**2,zgrid_temp) for i in xrange(len(zgrid_temp))],axis=0)
+        z_pdf/=trapz(z_pdf,zgrid_temp)
+        zmax.append(max(z_pdf))
+
+        # plot redshift pdf
+        subplot(gs[2,0])
+        xticks(arange(rparams[0],rparams[1]+rparams[2]/2.0,rparams[2]),fontsize=24)
+        yticks([])
+        xlim([rparams[0],rparams[1]])
+        ylim([0,max(zmax)*1.05])
+        plot(zgrid_temp,z_pdf,color='black',lw=0.25)
+        fill_between(zgrid_temp,z_pdf,color=pcolor,alpha=0.7)
+        xlabel('Redshift')
+        tight_layout()
+
+<<<<<<< HEAD
+        # mag pdf
+        mag_pdf=pdf_kde_wt_dict(mdict.sig_dict,mdict.sig_width,cat_train.mag_asinh_idx[:,midx][cat_train.flag_train][tobj],cat_train.mag_asinh_err_idx[:,midx][cat_train.flag_train][tobj],tprob,mdict.grid,mdict.delta,mdict.Ngrid)
+        mlow,mhigh=argmin(abs(mdict.grid-mparams[0])),argmin(abs(mdict.grid-mparams[1]))
+        mgrid_temp=mdict.grid[mlow:mhigh+1]
+        mag_pdf=mag_pdf[mlow:mhigh+1]
+        if mparams[-1]>0:
+            mag_pdf=sum([mag_pdf[i]*gaussian(mgrid_temp[i],mparams[-1]**2,mgrid_temp) for i in xrange(len(mgrid_temp))],axis=0)
+        mag_pdf/=trapz(mag_pdf,mgrid_temp)
+        mmax.append(max(mag_pdf))
+=======
+    count=0
+    for i in arange(Nobj)[sel]:
+        if count%5000==0: sys.stderr.write(str(count)+' ')
+        count+=1
+        tzpdf=zpdf[i]
+        tsel=tzpdf>max(tzpdf)*pdf_thresh # probability threshold cut
+        x_idx,x_cent=pe_idx[i],p_idx[i] # dictionary entry and location
+        x_bound=pdict.sig_width[x_idx] # dictionary width
+        pstack=histogram((zgrid[tsel]-z[i])/(1+z[i]),zdisp_bins,weights=tzpdf[tsel])[0] # d(pdf) stack
+        psel=pstack>max(pstack)*pdf_thresh
+        tstack=pdict.sig_dict[x_idx][:,None]*pstack[psel]
+        temp_stack[x_cent-x_bound:x_cent+x_bound+1,psel]+=tstack*weights[i]
+>>>>>>> parent of 5ff3c56... fixes/updates
+
+        # plot mag pdf
+        subplot(gs[2,1])
+        xticks(arange(mparams[0],mparams[1]+mparams[2]/2.0,mparams[2]),fontsize=24)
+        yticks([])
+        xlim([mparams[0],mparams[1]])
+        ylim([0,max(mmax)*1.05])
+        plot(mgrid_temp,mag_pdf,color='black',lw=0.25)
+        fill_between(mgrid_temp,mag_pdf,color=pcolor,alpha=0.7)
+        xlabel('Magnitude ('+filt.filters[midx]+')')
+        tight_layout()
+        
+        # color pdf
+        color_pdf=pdf_kde_wt_dict(cdict.sig_dict,cdict.sig_width,cat_train.color_asinh_idx[:,cidx][cat_train.flag_train][tobj],cat_train.color_asinh_err_idx[:,cidx][cat_train.flag_train][tobj],tprob,cdict.grid,cdict.delta,cdict.Ngrid)
+        clow,chigh=argmin(abs(cdict.grid-cparams[0])),argmin(abs(cdict.grid-cparams[1]))
+        cgrid_temp=cdict.grid[clow:chigh+1]
+        color_pdf=color_pdf[clow:chigh+1]
+        if cparams[-1]>0:
+            color_pdf=sum([color_pdf[i]*gaussian(cgrid_temp[i],cparams[-1]**2,cgrid_temp) for i in xrange(len(cgrid_temp))],axis=0)
+        color_pdf/=trapz(color_pdf,cgrid_temp)
+        cmax.append(max(color_pdf))
+
+        # plot color pdf
+        subplot(gs[2,2])
+        xticks(arange(cparams[0],cparams[1]+cparams[2]/2.0,cparams[2]),fontsize=24)
+        yticks([])
+        xlim([cparams[0],cparams[1]])
+        ylim([0,max(cmax)*1.05])
+        plot(cgrid_temp,color_pdf,color='black',lw=0.25)
+        fill_between(cgrid_temp,color_pdf,color=pcolor,alpha=0.7)
+        xlabel('Color ('+filt.filters[cidx]+'-'+filt.filters[cidx+1]+')')
+        tight_layout()
+
+    # detail cell quantities
+    subplot(gs[:2,:])
+    text(xmin-0.025*xmax+(xmax-xmin)*0.025,ymax-(ymax-ymin)*0.07,str(pos),weight='bold',color=color_cell,fontsize=30)
+    text(xmin-0.025*xmax+(xmax-xmin)*0.025,ymax-(ymax-ymin)*0.15,'P(cell)='+str(round(sum(cell_prob),2)),weight='bold',color='red',fontsize=30)
+    text(xmin-0.025*xmax+(xmax-xmin)*0.025,ymax-(ymax-ymin)*0.23,str(len(cell_prob))+' objects',weight='bold',color='black',fontsize=30)
+    tight_layout()
+
+
+def plot_cell_2dpz(pos, filt, som, som_map, cell_lz_idx, cell_lze_idx, rdict, cell_p_idx, cell_pe_idx, pdict, pname, sel_list=None, rparams=[0,6,1.0], pparams=[18,26,2.0], rnames=None, pdf_thresh=1e-3, boxcar=10):
+
+    # define number of plotting instances
+    Nplot=1
+    if sel_list is not None:
+        Nplot=len(sel_list)
+
+    # define breakdown of plots
+    gs = gridspec.GridSpec(Nplot,Nplot)
+
+    # 1-D index of position
+    pos_idx=arange(som.Ncell)[product(som.position==pos,axis=1)==1].item()
+
+    # selection of objects that pass initial cuts
+    cell_sel=som_map.obj_flag[som_map.cell_obj[pos_idx]] # selection array
+    cell_obj=som_map.cell_obj[pos_idx][cell_sel] # selected objects
+    cell_prob=(som_map.cell_prob[pos_idx][cell_sel]).astype('double') # associated probability
+
+    rmean_arr,weight_arr=[],[]
+    
+    for count in xrange(Nplot):
+
+        temp_stack=zeros((pdict.Ngrid,rdict.Nz_highres)) # 2-D P(z) grid
+
+        # applying additional selection criteria
+        if sel_list is not None:
+            sel=(sel_list[count])[cell_obj]
+            tobj=cell_obj[sel]
+            tprob=cell_prob[sel]
+        else:
+            tobj=cell_obj
+            tprob=cell_prob
+
+        # photometry in cell
+        tphot=cell_p_idx[tobj]
+        terr=cell_pe_idx[tobj]
+
+        # redshift in cell
+        tlz=cell_lz_idx[tobj]
+        tlze=cell_lze_idx[tobj]
+
+        # stack multivariate Gaussian
+        for i in xrange(len(tobj)):
+            x_cent,y_cent=tphot[i],tlz[i]
+            x_bound,y_bound=pdict.sig_width[terr[i]],rdict.lze_width[tlze[i]]
+            mvg=outer(pdict.sig_dict[terr[i]],rdict.lze_dict[tlze[i]])*tprob[i]
+            temp_stack[x_cent-x_bound:x_cent+x_bound+1,y_cent-y_bound:y_cent+y_bound+1]+=mvg
+        temp_stack=temp_stack[:,rdict.zmin_idx_highres:rdict.zmax_idx_highres:int(rdict.res)]
+        #temp_stack/=rdict.znorm
+
+        rmean_arr.append(average(rdict.lzgrid,weights=sum(temp_stack,axis=0))) # mean redshift averaged across the whole sample
+        weight_arr.append(sum(tprob))
+        
+        # running median
+        rmed_sliding=zeros(pdict.Ngrid)
+        for i in xrange(pdict.Ngrid):
+            if sum(temp_stack[i,:])==0:
+                rmed_sliding[i]=NaN
+            else:
+                temp=cumsum(temp_stack[i,:])
+                temp/=temp[-1]
+                rmed_sliding[i]=rdict.lzgrid[argmin(abs(temp-0.5))]
+        
+        temp_stack=ma.array(temp_stack,mask=temp_stack<pdf_thresh) # mask array
+
+        # plot 2-D stack
+        subplot(gs[:,count])
+        imshow(temp_stack,origin='lower',extent=(rdict.lzgrid[0],rdict.lzgrid[-1],pdict.grid[0],pdict.grid[-1]),aspect='auto',norm=matplotlib.colors.LogNorm(vmin=None, vmax=None))
+        plot(pdict.grid*0.0+rmean_arr[count],pdict.grid,'r-.',lw=2)
+        plot(convolve(rmed_sliding[isnan(rmed_sliding)==False],ones(boxcar).astype('float')/boxcar,'valid'),convolve(pdict.grid[isnan(rmed_sliding)==False],ones(boxcar).astype('float')/boxcar,'valid'),'k-',lw=2,zorder=10)
+        colorbar(label='PDF')
+        zticks=arange(rparams[0],rparams[1]+rparams[2],rparams[2])
+        lzticks=log(1+zticks)
+        xticks(lzticks,zticks)
+        xlim([lzticks[0],lzticks[-1]])
+        yticks(arange(pparams[0],pparams[1]+pparams[2],pparams[2]))
+        ylim([pparams[0],pparams[1]])
+        if rnames is not None:
+            xlabel(rnames[count])
+        else:
+            xlabel('Redshift')
+        ylabel(pname)
+        title('N_obj='+str(round(sum(tprob),2)),y=1.02)
+        tight_layout()
+
+    # plot mean average across all samples
+    rmean=average(rmean_arr,weights=weight_arr)
+    for count in xrange(Nplot):
+        subplot(gs[:,count])
+        plot(pdict.grid*0.0+rmean,pdict.grid,'r--',lw=3)
+
+    return temp_stack
+
+
+
 """
