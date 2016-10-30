@@ -141,8 +141,8 @@ def loglikelihood_s(data, data_var, data_mask, models, models_var, models_mask):
     Nbands=tot_mask.sum(axis=1) # number of bands
     
     # derive scalefactors between data and models
-    inter_vals=(tot_masks*models*data[None,:]/data_var[None,:]).sum(axis=1) # interaction term
-    shape_vals=(tot_masks*models*models/data_var[None,:]).sum(axis=1) # model-dependent term (i.e. quadratic 'steepness' of chi2)
+    inter_vals=(tot_mask*models*data[None,:]/data_var[None,:]).sum(axis=1) # interaction term
+    shape_vals=(tot_mask*models*models/data_var[None,:]).sum(axis=1) # model-dependent term (i.e. quadratic 'steepness' of chi2)
     scale_vals=inter_vals/shape_vals # maximum-likelihood scalefactors
 
     # compute ln(likelihood)
@@ -364,16 +364,16 @@ def pdfs_resample(target_grid, target_pdfs, new_grid):
     resampled PDFs
     """
     
-    sys.stderr.write("Resampling PDFs...")
+    sys.stdout.write("Resampling PDFs...")
     
     Nobj,Npoints=len(target_pdfs),len(new_grid) # grab size of inputs
     new_pdfs=zeros((Nobj,Npoints)) # create new array
     for i in xrange(Nobj):
-        if i%5000==0: sys.stderr.write(str(i)+" ")
+        if i%5000==0: sys.stdout.write(str(i)+" ")
         new_pdfs[i]=interp(new_grid,target_grid,target_pdfs[i]) # interpolate PDF
         new_pdfs[i]/=sum(new_pdfs[i]) # re-normalize
         
-    sys.stderr.write("done!\n")
+    sys.stdout.write("done!\n")
 
     return new_pdfs
 
@@ -427,10 +427,10 @@ def pdfs_summary_statistics(target_grid, target_pdfs, conf_width=0.03, deg_splin
     u2=m+i2/2 # upper 2
 
     
-    sys.stderr.write("Computing PDF quantities...")
+    sys.stdout.write("Computing PDF quantities...")
     
     for i in xrange(Ntest):
-        if i%5000==0: sys.stderr.write(str(i)+" ")
+        if i%5000==0: sys.stdout.write(str(i)+" ")
         
         # mean quantities
         pdf_mean[i]=dot(target_pdfs[i],target_grid)
@@ -448,7 +448,7 @@ def pdfs_summary_statistics(target_grid, target_pdfs, conf_width=0.03, deg_splin
         conf_high,conf_low=interp([pdf_med[i]+conf_range,pdf_med[i]-conf_range],target_grid,cdf) # high/low CDF values
         pdf_conf[i]=conf_high-conf_low # zConf
         
-    sys.stderr.write("done!\n")
+    sys.stdout.write("done!\n")
 
     return pdf_mean, pdf_med, pdf_mode, pdf_l68, pdf_h68, pdf_l95, pdf_h95, pdf_std, pdf_conf
 
@@ -796,7 +796,7 @@ class FRANKENZ():
 
         # find nearest neighbors
         for i in xrange(self.NMEMBERS):
-            sys.stderr.write(str(i)+' ')
+            sys.stdout.write(str(i)+' ')
 
             # train kd-trees
             if impute_train is not None:
@@ -827,10 +827,10 @@ class FRANKENZ():
             model_ll[i][:Nidx],model_Nbands[i][:Nidx]=ll_func(phot_test[i],var_test[i],masks_test[i],phot[midx_unique],var[midx_unique],masks[midx_unique])
 
             if i%5000==0: 
-                sys.stderr.write(str(i)+' ') # counter
+                sys.stdout.write(str(i)+' ') # counter
                 gc.collect() # garbage collect
     
-        sys.stderr.write('done!\n')
+        sys.stdout.write('done!\n')
 
         return model_objects,model_Nobj,model_ll,model_Nbands
 
