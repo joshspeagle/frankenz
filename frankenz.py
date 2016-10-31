@@ -161,27 +161,25 @@ def loglikelihood_s(data, data_var, data_mask, models, models_var, models_mask):
 ########## FEATURE MAPS ##########
 
 
-def asinh_mag_map(phot, err, zeropoint=None, skynoise=None):
+def asinh_mag_map(phot, err, skynoise, zeropoint=None):
     """
     Map input fluxes/errors to asinh magnitudes (i.e. "Luptitude"; Lupton et al. 1999).
 
     Keyword arguments:
     phot -- fluxes
     err -- flux errors
+    skynoise -- background sky noise (i.e. softening parameter)
     zeropoint -- flux zero-points (default: 1.)
-    skynoise -- background sky noise (default: median(err))
     
     Outputs:
     asinh_mag -- asinh magnitudes
     asinh_mag_err -- associated transformed errors
     """
 
-    # initialize flux zero-points and sky noise levels
+    # initialize flux zero-points
     Nbands=(phot.shape)[-1] # total number of bands
     if zeropoint is None:
         zeropoint=ones(Nbands)
-    if skynoise is None:
-        skynoise=median(err,axis=0)
 
     # compute Luptitudes 
     mag_asinh=-2.5/log(10)*(arcsinh(phot/(2*skynoise))+log(skynoise/zeropoint))
@@ -190,6 +188,30 @@ def asinh_mag_map(phot, err, zeropoint=None, skynoise=None):
     return mag_asinh,mag_asinh_err
 
 
+def inv_asinh_mag_map(mag, magerr, skynoise, zeropoint=None):
+    """
+    Map input asinh magnitudes to fluxes.
+
+    Keyword arguments:
+    mag -- asinh magnitudes
+    magerr -- asinh magnitude errors
+    zeropoint -- flux zero-points (default: 1.)
+
+    Outputs: 
+    phot -- fluxes
+    err -- associated flux errors
+    """
+
+    # initialize flux zero-points
+    Nbands=(mag.shape)[-1] # total number of bands
+    if zeropoint is None:
+        zeropoint=ones(Nbands)
+
+    # compute fluxes
+    phot=sinh(-log(10)/2.5*mag-log(skynoise/zeropoint))*(2*skynoise)
+    err=sqrt(square(magerr)*(square(2*skynoise)+square(phot)))/(2.5*log10(e))
+
+    return phot,err
 
 def asinh_magcolor_map(phot, err, zeropoint=None, skynoise=None):
     """
@@ -772,7 +794,7 @@ class FRANKENZ():
         phot[_test] -- fluxes (training/testing)
         err[_test] -- flux errors (training/testing)
         masks[_test] -- flux masks (training/testing)        
-        f_func -- feature function (default: asinh_magnitude)
+        f_func -- feature function (default: asinh_magnitude).
         ll_func -- log-likelihood function (default: loglikelihood)
 
         Outputs:
@@ -793,6 +815,7 @@ class FRANKENZ():
         model_Nbands=empty((Ntest,Npred),dtype='uint8') # number of bands used in fit
 
         var,var_test=square(err),square(err_test)
+        skynoise=median(err,axis=0)
 
         # find nearest neighbors
         for i in xrange(self.NMEMBERS):
@@ -804,7 +827,7 @@ class FRANKENZ():
                 phot_t=normal(phot_t,sqrt(var_t))
             else:
                 phot_t=normal(phot,err).astype('float32') # perturb fluxes
-            X_t=f_func(phot_t,err)[0] # map to feature space
+            X_t=f_func(phot_t,err,skynoise)[0] # map to feature space
             knn=base.clone(self.knn).fit(X_t) # train kd-tree
 
             # query kd-trees
@@ -813,7 +836,7 @@ class FRANKENZ():
                 phot_test_t=normal(phot_test_t,sqrt(var_test_t))
             else:
                 phot_test_t=normal(phot_test,err_test).astype('float32') # perturb fluxes
-            X_test_t=f_func(phot_test_t,err_test)[0] # map to feature space
+            X_test_t=f_func(phot_test_t,err_test,skynoise)[0] # map to feature space
             model_indices[i]=knn.kneighbors(X_test_t,return_distance=False) # find neighbors
 
         # select/compute log-likelihoods to unique subset of neighbors
