@@ -426,7 +426,6 @@ def pdfs_summary_statistics(target_grid, target_pdfs, conf_width=0.03, deg_splin
 
     # initialize variables
     Ntest=len(target_pdfs) # number of input pdfs
-    grid_fine=arange(target_grid[0],target_grid[-1]+res/2.,res) # resampled grid
     
     pdf_mean=zeros(Ntest,dtype='float32') # mean (first moment)
     pdf_std=zeros(Ntest,dtype='float32') # standard deviation (sqrt of normalized second moment)
@@ -463,7 +462,7 @@ def pdfs_summary_statistics(target_grid, target_pdfs, conf_width=0.03, deg_splin
         
         # cumulative distribution function
         cdf=cumsum(target_pdfs[i]) # original CDF (normalized to 1)
-        pdf_med[i],pdf_h68[i],pdf_l68[i],pdf_h95[i],pdf_l95[i]=interp([m,u1,l1,u2,l2],target_grid,cdf) # median quantities
+        pdf_med[i],pdf_h68[i],pdf_l68[i],pdf_h95[i],pdf_l95[i]=interp([m,u1,l1,u2,l2],cdf,target_grid) # median quantities
         
         # confidence flag
         conf_range=conf_width*(1+pdf_med[i]) # redshift integration range
@@ -783,7 +782,7 @@ class FRANKENZ():
 
 
 
-    def predict(self, phot, err, masks, phot_test, err_test, masks_test, f_func=asinh_mag_map, ll_func=loglikelihood, impute_train=None, impute_test=None):
+    def predict(self, phot, err, masks, phot_test, err_test, masks_test, f_func=asinh_mag_map, ll_func=loglikelihood, impute_train=None, impute_test=None, subsample=None):
         """
         Generate Full Regression over Associated Neighbors with Kernel dENsity redshift (FRANKEN-Z) PDFs.
         Objects in the training set to be fit (i.e. regressed over) are selected from kd-trees based on a set of transformed FEATURES.
@@ -796,6 +795,8 @@ class FRANKENZ():
         masks[_test] -- flux masks (training/testing)        
         f_func -- feature function (default: asinh_magnitude).
         ll_func -- log-likelihood function (default: loglikelihood)
+        impute[_train/test] -- WINBET instances used for imputing missing fluxes (default: None)
+        subsample -- number of dimensions to subsample (default: None)
 
         Outputs:
         model_objects -- unique matched object indices
@@ -817,9 +818,14 @@ class FRANKENZ():
         var,var_test=square(err),square(err_test)
         skynoise=median(err,axis=0)
 
+        if subsample is None:
+            subsample=Nf
+
         # find nearest neighbors
         for i in xrange(self.NMEMBERS):
             sys.stdout.write(str(i)+' ')
+
+            xdim=choice(Nf,size=subsample,replace=False)
 
             # train kd-trees
             if impute_train is not None:
@@ -828,7 +834,7 @@ class FRANKENZ():
             else:
                 phot_t=normal(phot,err).astype('float32') # perturb fluxes
             X_t=f_func(phot_t,err,skynoise)[0] # map to feature space
-            knn=base.clone(self.knn).fit(X_t) # train kd-tree
+            knn=base.clone(self.knn).fit(X_t[:,xdim]) # train kd-tree
 
             # query kd-trees
             if impute_test is not None:
@@ -837,7 +843,7 @@ class FRANKENZ():
             else:
                 phot_test_t=normal(phot_test,err_test).astype('float32') # perturb fluxes
             X_test_t=f_func(phot_test_t,err_test,skynoise)[0] # map to feature space
-            model_indices[i]=knn.kneighbors(X_test_t,return_distance=False) # find neighbors
+            model_indices[i]=knn.kneighbors(X_test_t[:,xdim],return_distance=False) # find neighbors
 
         # select/compute log-likelihoods to unique subset of neighbors
         for i in xrange(Ntest):
