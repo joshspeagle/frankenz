@@ -818,14 +818,17 @@ class FRANKENZ():
         var,var_test=square(err),square(err_test)
         skynoise=median(err,axis=0)
 
-        if subsample is None:
-            subsample=Nf
-
         # find nearest neighbors
         for i in xrange(self.NMEMBERS):
             sys.stdout.write(str(i)+' ')
 
-            xdim=choice(Nf,size=subsample,replace=False)
+            # subsample features
+            if subsample is None:
+                xdim=arange(Nf) # if not initialized, use all dimensions
+            elif isinstance(subsample,int):
+                xdim=choice(Nf,size=subsample,replace=False) # if int, generate random subsample
+            else:
+                xdim=subsample # else, assume indices of dimensions to subsample
 
             # train kd-trees
             if impute_train is not None:
