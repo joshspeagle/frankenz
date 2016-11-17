@@ -853,6 +853,7 @@ class FRANKENZ():
             midx_unique=pandas.unique(model_indices[:,i,:].flatten()) # unique indices
             Nidx=len(midx_unique) # number of unique indices
             model_objects[i][:Nidx]=midx_unique
+            model_objects[i][Nidx:]=-99
             model_Nobj[i]=Nidx
 
             # compute log-likelihoods and Nbands
