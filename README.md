@@ -13,12 +13,11 @@ Content:
 - **mock_survey.ipynb**: Notebook to generate a photometric survey mock with realistic fluxes/errors, redshifts, and underlying galaxy types based on priors provided in [BPZ](http://www.stsci.edu/~dcoe/BPZ/). Based on a similar notebook written by [@ixkael](https://github.com/ixkael/Photoz-tools).
 - **frankenz_tests**: Notebook comparing FRANKEN-Z performance to likelihood-fitting routines generated from *mock_survey.ipynb*. Includes noise/noiseless tests and scale-free/scale-dependent likelihood comparisons.
 - **frankenz_imputation**: Notebook outlining how FRANKEN-Z deals with missing data. Includes comparison to [FancyImpute](https://github.com/hammerlab/fancyimpute) as well as motivation/development/application of Weighted Inference using Naive Bayes and Extra Trees (**WINBET**).
-- **frankenz_application**: Notebook detailing application to [HSC](http://hsc.mtk.nao.ac.jp/ssp/) S16A data.
+- **frankenz_application_[pt1/pt2/pt3]**: Notebooks detailing application to [HSC](http://hsc.mtk.nao.ac.jp/ssp/) S16A data showing how things work in practice.
 
 Contributors:
 - Josh Speagle (Harvard)
 - Boris Leistedt (NYU)
-- Additional people...
 
 Related papers:
 - *Hierarchical Bayesian Inference of Galaxy Redshift Distributions from Photometric Surveys* by Leistedt, Mortlock and Peiris. [arxiv:1602.05960](http://arxiv.org/abs/1602.05960).
