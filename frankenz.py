@@ -389,7 +389,7 @@ def pdfs_resample(target_grid, target_pdfs, new_grid):
     sys.stdout.write("Resampling PDFs...")
     
     Nobj,Npoints=len(target_pdfs),len(new_grid) # grab size of inputs
-    new_pdfs=zeros((Nobj,Npoints)) # create new array
+    new_pdfs=empty((Nobj,Npoints),dtype='float32') # create new array
     for i in xrange(Nobj):
         if i%5000==0: sys.stdout.write(str(i)+" ")
         new_pdfs[i]=interp(new_grid,target_grid,target_pdfs[i]) # interpolate PDF
