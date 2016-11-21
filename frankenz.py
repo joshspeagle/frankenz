@@ -14,6 +14,7 @@ import matplotlib
 import scipy
 from numpy import *
 from numpy.random import *
+from numpy.random import choice
 from matplotlib import *
 from matplotlib.pyplot import *
 from scipy import *
@@ -391,7 +392,9 @@ def pdfs_resample(target_grid, target_pdfs, new_grid):
     Nobj,Npoints=len(target_pdfs),len(new_grid) # grab size of inputs
     new_pdfs=empty((Nobj,Npoints),dtype='float32') # create new array
     for i in xrange(Nobj):
-        if i%5000==0: sys.stdout.write(str(i)+" ")
+        if i%5000==0: 
+            sys.stdout.write(str(i)+' ')
+            sys.stdout.flush()
         new_pdfs[i]=interp(new_grid,target_grid,target_pdfs[i]) # interpolate PDF
         new_pdfs[i]/=sum(new_pdfs[i]) # re-normalize
         
@@ -451,7 +454,9 @@ def pdfs_summary_statistics(target_grid, target_pdfs, conf_width=0.03, deg_splin
     sys.stdout.write("Computing PDF quantities...")
     
     for i in xrange(Ntest):
-        if i%5000==0: sys.stdout.write(str(i)+" ")
+        if i%5000==0: 
+            sys.stdout.write(str(i)+' ')
+            sys.stdout.flush()
         
         # mean quantities
         pdf_mean[i]=dot(target_pdfs[i],target_grid)
@@ -660,6 +665,7 @@ class WINBET():
         # gather neighbors
         for counter in xrange(self.NTREES):
             sys.stdout.write(str(counter)+' ')
+            sys.stdout.flush()
 
             # generate new fluxes (training)
             X_filled=normal(Xt,Xet) # perturb features
@@ -707,7 +713,9 @@ class WINBET():
 
         # compute likelihood-weighted estimates for fluxes, errors
         for obj in xrange(self.NCENSOR):
-            if obj%500==0: sys.stdout.write(str(obj)+' ')
+            if obj%500==0: 
+                sys.stdout.write(str(obj)+' ')
+                sys.stdout.flush()
 
             idx=self.censor_sel[obj] # object index
 
@@ -820,7 +828,8 @@ class FRANKENZ():
 
         # find nearest neighbors
         for i in xrange(self.NMEMBERS):
-            sys.stdout.write(str(i)+' ')
+            sys.stdout.write(str(i)+': ')
+            sys.stdout.flush()
 
             # subsample features
             if subsample is None:
@@ -861,6 +870,7 @@ class FRANKENZ():
 
             if i%5000==0: 
                 sys.stdout.write(str(i)+' ') # counter
+                sys.stdout.flush()
                 gc.collect() # garbage collect
     
         sys.stdout.write('done!\n')
