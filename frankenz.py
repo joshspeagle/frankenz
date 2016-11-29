@@ -604,19 +604,21 @@ class WINBET():
     """
 
     
-    def __init__(self, Ntrees=100, Nleaf=10):
+    def __init__(self, Ntrees=100, Nleaf=10, thresh=10):
         """
         Initializes the instance. 
 
         Keyword arguments:
-        N_members -- number of members in ensemble
-        See sklearn.neighbors.NearestNeighbors for a description of additional keyword arguments and their defaults.
+        Ntrees -- number of members in ensemble
+        Nleaf -- minimum number of objects contained in a leaf
+        thresh -- minimum number of objects allowed for "reliable" predictions
         """
 
         # establish baseline model
         self.NTREES=Ntrees # number of trees
         self.NLEAF=Nleaf # minimum number of objects per leaf
-        self.lf=tree.ExtraTreeRegressor(min_samples_leaf=self.NLEAF)
+        self.lf=tree.ExtraTreeRegressor(min_samples_leaf=self.NLEAF) # initialize tree object
+        self.thresh=thresh # minimum number of objects for reliable predictions
 
     def train(self, phot, var, masks, X, Xe, Xdict):
         """
@@ -706,10 +708,12 @@ class WINBET():
         Outputs:
         phot_impute -- filled photometric data
         var_impute -- filled variance data
+        sel_impute -- selection flag for reliable results (post-imputation)
         """
 
         pcensor=empty((self.NOBJ,self.NFILT))
         vcensor=empty((self.NOBJ,self.NFILT))
+        sel_impute=ones(self.NOBJ,dtype='bool')
 
         # compute likelihood-weighted estimates for fluxes, errors
         for obj in xrange(self.NCENSOR):
@@ -722,41 +726,50 @@ class WINBET():
             tidx=pandas.unique([i for j in self.test_indices[obj] for i in j]) # derive unique list of neighbors
             ptemp=phot[tidx] # phot subset
             vtemp=var[tidx] # var subset
-            mtemp=masks[tidx] # mask subset
+            mtemp0=masks[tidx] # mask subset
 
             # derive likelihoods
-            ll,nbands=ll_func(phot[idx],var[idx],masks[idx],ptemp,vtemp,mtemp)
+            ll,nbands=ll_func(phot[idx],var[idx],masks[idx],ptemp,vtemp,mtemp0)
 
             # derive dimension-specific collections of weights and photometry
-            mtemp=[mtemp[:,i]&(nbands>0) for i in xrange(self.NFILT)] # band-specific masks
-            ptemp=[ptemp[:,i][mtemp[i]] for i in xrange(self.NFILT)] # band-specific phot
-            vtemp=[vtemp[:,i][mtemp[i]] for i in xrange(self.NFILT)] # band-specific var
-            lltemp=[ll[mtemp[i]] for i in xrange(self.NFILT)] # band-specific log-likelihoods
-            wtemp=[exp(-0.5*(lltemp[i]-lltemp[i].min())) for i in xrange(self.NFILT)] # band-specific weights
+            mtemp=array([mtemp0[:,i]&(nbands>0) for i in xrange(self.NFILT)]) # band-specific masks
 
-            if impute_type=='mean':
-                # compute expected photometry
-                p1=array([average(ptemp[i],weights=wtemp[i]) for i in xrange(self.NFILT)]) # mean phot (first moment): E(X)
-                p2=array([average(square(ptemp[i]),weights=wtemp[i]) for i in xrange(self.NFILT)]) # second moment: E(X^2)
-                v1_i=p2-square(p1) # variance imputed phot: V(X)=E(X^2)-E^2(X)
-                v1_m=array([average(vtemp[i],weights=wtemp[i]) for i in xrange(self.NFILT)]) # mean measured variance: E(Xe^2)
-                v_eff=v1_i+v1_m # effective error: observed variance and mean variance in quadrature sqrt([E(Xe^2)+V(X)])
-                pcensor[idx]=p1 # fill in photometry
-                vcensor[idx]=v_eff # fill in photometry
+            if (mtemp.sum(axis=0)<self.thresh).sum()>0: # if one axis is below reliability threshold, fill using average of neighboring objects across all bands
+                sel_impute[idx]=False # set reliability flag to False
+                ptemp=ptemp[mtemp0]
+                vtemp=vtemp[mtemp0]
+                pcensor[idx]=median(ptemp) # median phot
+                vcensor[idx]=median(vtemp) # median err
+                
+            else: # if all axes are good, fill using weighted inference (per band)
+                ptemp=[ptemp[:,i][mtemp[i]] for i in xrange(self.NFILT)] # band-specific phot
+                vtemp=[vtemp[:,i][mtemp[i]] for i in xrange(self.NFILT)] # band-specific var
+                lltemp=[ll[mtemp[i]] for i in xrange(self.NFILT)] # band-specific log-likelihoods
+                wtemp=[exp(-0.5*(lltemp[i]-lltemp[i].min())) for i in xrange(self.NFILT)] # band-specific weights
 
-            if impute_type=='random':
-                # generate random sample
-                choice_idx=[choice(tidx[mtemp[i]],p=wtemp[i]/wtemp[i].sum()) for i in xrange(self.NFILT)]
-                pcensor[idx]=phot[choice_idx,xrange(self.NFILT)]
-                vcensor[idx]=var[choice_idx,xrange(self.NFILT)]
-
-        # fill in photometry
-        phot_impute=copy(phot)
-        var_impute=copy(var)
-        phot_impute[masks==False]=pcensor[masks==False]
-        var_impute[masks==False]=vcensor[masks==False]
-    
-        return phot_impute,var_impute
+                if impute_type=='mean':
+                    # compute expected photometry
+                    p1=array([average(ptemp[i],weights=wtemp[i]) for i in xrange(self.NFILT)]) # mean phot (first moment): E(X)
+                    p2=array([average(square(ptemp[i]),weights=wtemp[i]) for i in xrange(self.NFILT)]) # second moment: E(X^2)
+                    v1_i=p2-square(p1) # variance imputed phot: V(X)=E(X^2)-E^2(X)
+                    v1_m=array([average(vtemp[i],weights=wtemp[i]) for i in xrange(self.NFILT)]) # mean measured variance: E(Xe^2)
+                    v_eff=v1_i+v1_m # effective error: observed variance and mean variance in quadrature sqrt([E(Xe^2)+V(X)])
+                    pcensor[idx]=p1 # fill in photometry
+                    vcensor[idx]=v_eff # fill in photometry
+                    
+                if impute_type=='random':
+                    # generate random sample
+                    choice_idx=[choice(tidx[mtemp[i]],p=wtemp[i]/wtemp[i].sum()) for i in xrange(self.NFILT)]
+                    pcensor[idx]=phot[choice_idx,xrange(self.NFILT)]
+                    vcensor[idx]=var[choice_idx,xrange(self.NFILT)]
+                        
+            # fill in photometry
+            phot_impute=copy(phot)
+            var_impute=copy(var)
+            phot_impute[masks==False]=pcensor[masks==False]
+            var_impute[masks==False]=vcensor[masks==False]
+                
+        return phot_impute,var_impute,sel_impute
 
 
 
@@ -828,7 +841,7 @@ class FRANKENZ():
 
         # find nearest neighbors
         for i in xrange(self.NMEMBERS):
-            sys.stdout.write(str(i)+': ')
+            sys.stdout.write('\n'+str(i)+': ')
             sys.stdout.flush()
 
             # subsample features
@@ -841,23 +854,29 @@ class FRANKENZ():
 
             # train kd-trees
             if impute_train is not None:
-                phot_t,var_t=impute_train.impute(phot,var,masks,impute_type='random')
-                phot_t=normal(phot_t,sqrt(var_t))
+                phot_t,var_t,sel_impute=impute_train.impute(phot,var,masks,impute_type='random') # impute missing fluxes
+                phot_t=normal(phot_t,sqrt(var_t)) # perturb fluxes
             else:
                 phot_t=normal(phot,err).astype('float32') # perturb fluxes
+                sel_impute=ones(Ntrain,dtype='bool')
+
             X_t=f_func(phot_t,err,skynoise)[0] # map to feature space
             knn=base.clone(self.knn).fit(X_t[:,xdim]) # train kd-tree
 
             # query kd-trees
             if impute_test is not None:
-                phot_test_t,var_test_t=impute_test.impute(phot_test,var_test,masks_test,impute_type='random')
-                phot_test_t=normal(phot_test_t,sqrt(var_test_t))
+                phot_test_t,var_test_t,sel_impute_test=impute_test.impute(phot_test,var_test,masks_test,impute_type='random') # impute missing fluxes
+                phot_test_t=normal(phot_test_t,sqrt(var_test_t)) # perturb fluxes
             else:
                 phot_test_t=normal(phot_test,err_test).astype('float32') # perturb fluxes
+                sel_impute_test=ones(Ntest,dtype='bool')
+
             X_test_t=f_func(phot_test_t,err_test,skynoise)[0] # map to feature space
             model_indices[i]=knn.kneighbors(X_test_t[:,xdim],return_distance=False) # find neighbors
 
         # select/compute log-likelihoods to unique subset of neighbors
+        sys.stdout.write('\n')
+        sys.stdout.flush()
         for i in xrange(Ntest):
             midx_unique=pandas.unique(model_indices[:,i,:].flatten()) # unique indices
             Nidx=len(midx_unique) # number of unique indices
@@ -875,7 +894,7 @@ class FRANKENZ():
     
         sys.stdout.write('done!\n')
 
-        return model_objects,model_Nobj,model_ll,model_Nbands
+        return model_objects,model_Nobj,model_ll,model_Nbands,sel_impute_test
 
 
 
