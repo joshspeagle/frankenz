@@ -73,7 +73,7 @@ def main(config_file, target_data, target_name, output_location, N_members=25, N
     # flag_survey: SDSS=1, DEEP2=2, PRIMUS=3, VIPERS=4, VVDS=5, GAMA=6, WIGGLEZ=7, COSMOS=8, UDSZ=9, 3DHST=10, FMOS-COSMOS=11
 
     # load observed data
-    hdul=fits.open('hsc_s16a_combined_specz_highq_clean_errsim_v1.fits') # training data location
+    hdul=fits.open('/media/joshspeagle/OSDisk/Users/Josh/Dropbox/HSC/HSC_photoz/catalogs/hsc_s16a_combined_specz_highq_clean_errsim_train_v1.fits') # training data location
     data=hdul[1].data
     Ntrain=len(data)
 
@@ -139,13 +139,10 @@ def main(config_file, target_data, target_name, output_location, N_members=25, N
     mask_afterburner_test=(err_afterburner_test>0.)&isfinite(err_afterburner_test)
     mask_afterburner_test*=(flux_afterburner_test!=0.)&isfinite(flux_afterburner_test)
 
-    # selecting objects with data in all bands
-    flux_sel=mask_afterburner_test.sum(axis=1)==Nf
+    # selecting objects with at least one band of data
+    flux_sel=mask_afterburner_test.sum(axis=1)>0
     Nobs=flux_sel.sum() # number of objects
-    #Nobs_miss=(mask_afterburner_test[flux_sel].sum(axis=1)<Nf).sum() # number of objects with >=1 band but <Nf bands
-    #Nobs_nbands=array([(mask_afterburner_test[flux_sel].sum(axis=1)==i+1).sum() for i in xrange(Nf)]) # number of objects with Nbands observations
-    #Nobs_pbands=array([(mask_afterburner_test[flux_sel][:,i]).sum() for i in xrange(Nf)]) # number of objects with observations in each band
-    
+
     # convert to Luptitudes
     mag_afterburner_test,magerr_afterburner_test=fz.asinh_mag_map(flux_afterburner_test,err_afterburner_test,
                                                                   skynoise,zeropoint=flux_zeropoint)
@@ -162,20 +159,10 @@ def main(config_file, target_data, target_name, output_location, N_members=25, N
     sys.stdout.write('N(train): '+str(Ntrain)+'\n')
     sys.stdout.write('N(target[all]): '+str(Ntarget)+'\n')
     sys.stdout.write('N(target[valid]): '+str(Nobs)+'\n')
-    #sys.stdout.write('N(target[miss]): '+str(Nobs_miss)+'\n')
-    #sys.stdout.write('Bands observed: ')
-    #for i in xrange(Nf):
-    #    sys.stdout.write('Nf='+str(i+1)+': '+str(Nobs_nbands[i])+', ')
-    #sys.stdout.write('\n')
-    #sys.stdout.write('N(per band): ')
-    #for i in xrange(Nf):
-    #    sys.stdout.write(filt.filters[i]+'='+str(Nobs_pbands[i])+', ')
-    #    if (i<Nf)&(Nobs_pbands[i]<0.5*Nobs):
-    #        sys.exit('\nLess than 50% of objects observed in the '+filt.filters[i]+' band. Imputations unreliable. TERMINATING.')
-    #sys.stdout.write('\n')
-
-
-        
+    sys.stdout.write('N(target[miss]): '+str((mask_afterburner_test[flux_sel].sum(axis=1)<Nf).sum()))
+    for i in xrange(Nf-1):
+        sys.stdout.write(' (Nf='+str(i+1)+': '+str((mask_afterburner_test[flux_sel].sum(axis=1)==i+1).sum())+')')
+    sys.stdout.write('\n')
 
 
     #######################################
@@ -207,7 +194,7 @@ def main(config_file, target_data, target_name, output_location, N_members=25, N
 
     sys.stdout.write('Initializing WINBET target data instance...')    
     winbet_test=fz.WINBET(Ntrees=N_members,Nleaf=N_neighbors)
-    if (m2[flux_sel]==False).sum()>0:
+    if (m2==False).sum()>0:
         winbet_test.train(p2[flux_sel],v2[flux_sel],m2[flux_sel],mag2[flux_sel],mage2[flux_sel],mdict)
     else:
         winbet_test=None
@@ -221,16 +208,16 @@ def main(config_file, target_data, target_name, output_location, N_members=25, N
     
     sys.stdout.write('Computing FRANKEN-Z fits...')    
     frankenz=fz.FRANKENZ(N_members=N_members,n_neighbors=N_neighbors) # initialize FRANKEN-Z instance
-    model_obj,model_Nobj,model_ll,model_Nbands,model_reliable=frankenz.predict(p1,e1,m1,
-                                                                               p2[flux_sel],e2[flux_sel],m2[flux_sel],
-                                                                               impute_train=winbet_train,impute_test=winbet_test) # compute predictions
+    model_obj,model_Nobj,model_ll,model_Nbands=frankenz.predict(p1,e1,m1,
+                                                                p2[flux_sel],e2[flux_sel],m2[flux_sel],
+                                                                impute_train=winbet_train,impute_test=winbet_test) # compute predictions
     #sys.stdout.write('done!\n')
 
 
     sys.stdout.write('Saving fits...')
     
     gc.collect() # clean up memory
-    model_sel=arange(Ntarget)[flux_sel] # selected objects (index)
+    model_sel=arange(len(flux_sel))[flux_sel] # selected objects (index)
     Nm_max=N_neighbors*N_members # maximum number of neighbors
 
     cols=fits.ColDefs([
