@@ -1,0 +1,53 @@
+This is BibTeX, Version 0.99d (TeX Live 2016/Debian)
+Capacity: max_strings=100000, hash_size=100000, hash_prime=85009
+The top-level auxiliary file: frankenz.aux
+The style file: mnras.bst
+Database file #1: photoz.bib
+Repeated entry---line 887 of file photoz.bib
+ : @book{bishop06
+ :               ,
+I'm skipping whatever remains of this entry
+Reallocated singl_function (elt_size=4) to 100 items from 50.
+Reallocated singl_function (elt_size=4) to 100 items from 50.
+You've used 46 entries,
+            2881 wiz_defined-function locations,
+            1077 strings with 25868 characters,
+and the built_in function-call counts, 20944 in all, are:
+= -- 1650
+> -- 1538
+< -- 99
++ -- 715
+- -- 204
+* -- 2672
+:= -- 3312
+add.period$ -- 0
+call.type$ -- 46
+change.case$ -- 92
+chr.to.int$ -- 45
+cite$ -- 46
+duplicate$ -- 1038
+empty$ -- 1061
+format.name$ -- 340
+if$ -- 3539
+int.to.chr$ -- 2
+int.to.str$ -- 0
+missing$ -- 48
+newline$ -- 153
+num.names$ -- 300
+pop$ -- 254
+preamble$ -- 1
+purify$ -- 184
+quote$ -- 0
+skip$ -- 598
+stack$ -- 0
+substring$ -- 1080
+swap$ -- 529
+text.length$ -- 185
+text.prefix$ -- 0
+top$ -- 0
+type$ -- 408
+warning$ -- 0
+while$ -- 324
+width$ -- 0
+write$ -- 481
+(There was 1 error message)
