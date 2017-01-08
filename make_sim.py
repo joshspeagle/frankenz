@@ -233,27 +233,15 @@ class survey():
         for i in xrange(self.NTEMPLATES):
             self.tfnu[i] /= interp(lnorm, self.tw[i], self.tfnu[i])
 
-    def LoadPrior(self, p_tz_m, p_t_m, p_m):
+        
+    def SamplePrior(self, p_tz_m, p_t_m, p_m, Ndraws, mbounds=[16,28], Nm=1000, zbounds=[0,15], Nz=1000):
         """
-        Load input priors. This must be a function of galaxy type, redshift, and magnitude. 
+        Draw Ndraws samples from the joint P(t,z,m) prior.
 
         Keyword arguments:
         p_tz_m -- P(t,z|m)
         p_t_m -- P(t|m)
         p_m -- P(m)
-        mag_ref -- Reference magnitude
-        """
-
-        self.prior_tz_m = p_tz_m # P(t,z|m)
-        self.prior_t_m = p_t_m # P(t|m)
-        self.prior_p_m = p_m # P(m)
-
-        
-    def SamplePrior(self, Ndraws, mbounds=[16,28], Nm=1000, zbounds=[0,15], Nz=1000):
-        """
-        Draw Ndraws samples from the joint P(t,z,m) prior.
-
-        Keyword arguments:
         Ndraws -- number of samples
         mbounds -- magnitude bounds (default=16-28)
         Nm -- number of magnitude grid points (default=1000)
@@ -262,15 +250,15 @@ class survey():
         """
 
         sys.stdout.write('Sampling mags...')
-        mags = draw_mag(Ndraws, self.prior_p_m, self.MDEPTHS[self.mag_ref], mbounds, Nm)
+        mags = draw_mag(Ndraws, p_m, self.MDEPTHS[self.mag_ref], mbounds, Nm)
         sys.stdout.write('done!\n')
         
         sys.stdout.write('Sampling types...')
-        types = draw_type_mag(self.prior_t_m, mags, len(self.NTYPES))
+        types = draw_type_mag(p_t_m, mags, len(self.NTYPES))
         sys.stdout.write('done!\n')
         
         sys.stdout.write('Sampling redshifts...')
-        redshifts = draw_redshift_type_mag(self.prior_tz_m, types, mags, zbounds, Nz)
+        redshifts = draw_redshift_type_mag(p_tz_m, types, mags, zbounds, Nz)
         sys.stdout.write('done!\n')
 
         self.samples = array([types, redshifts, mags])
