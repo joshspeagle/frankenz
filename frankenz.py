@@ -27,14 +27,7 @@ from sklearn.externals import joblib # I/O on ML models
 import os # used to check for files
 from scipy import interpolate # interpolation
 
-# pre-processing and cross-validation
-from sklearn import cross_validation
-from sklearn.cross_validation import train_test_split
-from sklearn import decomposition
-from sklearn.preprocessing import StandardScaler
-
 # machine learning
-from sklearn import tree # decision trees
 from sklearn import neighbors # nearest neighbors
 from sklearn import base # additional methods
 
@@ -49,10 +42,6 @@ import gc
 SIG1=68.2689492/100.
 SIG2=95.4499736/100.
 SIG3=99.7300204/100.
-
-
-# pre-defined constants
-l2pi=log(2*pi)
 
 
 ########## PLOTTING DEFAULTS ##########
@@ -103,23 +92,23 @@ def loglikelihood(data, data_var, data_mask, models, models_var, models_mask):
 
     Outputs:
     chi2_mod -- -2lnL for each model
-    Nbands -- total number of bands used in likelihood calculation
+    Nbands -- number of overlapping bands
     """
 
-    tot_var=data_var+models_var # combined variance
-    tot_mask=data_mask*models_mask # combined binary mask
-    Nbands=tot_mask.sum(axis=1) # number of bands
+    tot_var = data_var + models_var # combined variance
+    tot_mask = data_mask * models_mask # combined binary mask
+    Nbands = tot_mask.sum(axis=1) # number of bands
 
     # compute ln(likelihood)    
-    resid=data-models # residuals
-    chi2=(tot_mask*resid*resid/tot_var).sum(axis=1) # compute standard chi2
-    chi2_mod=chi2-Nbands # normalize by E[chi2(N)]
+    resid = data - models # residuals
+    chi2 = (tot_mask * resid*resid / tot_var).sum(axis=1) # compute standard chi2
+    chi2_mod = chi2 - Nbands # normalize by E[chi2(N)]
     
     return chi2_mod, Nbands
 
 
 
-def loglikelihood_s(data, data_var, data_mask, models, models_var, models_mask):
+def loglikelihood_s(data, data_var, data_mask, models, models_var, models_mask, return_s=False):
     """
     Compute -2lnL W/ FREE SCALING using a set of models W/O ERRORS.
 
@@ -130,29 +119,32 @@ def loglikelihood_s(data, data_var, data_mask, models, models_var, models_mask):
     models -- collection of comparison models
     models_var -- model variances (unused)
     models_mask -- mask for missing model data
+    return_s -- return the maximum-likelihood scalefactor (default=False)
 
     Outputs:
     chi2_mod -- -2lnL for each model
-    chi2_s -- maximum-likelihood model scalefactor
-    chi2_a -- maximum-likelihood model 'shapefactor' (i.e. quadratic term)
-    Nbands -- total number of bands used in likelihood calculation
+    Nbands -- number of overlapping bands
+    scale_vals -- maximum-likelihood model scalefactor
     """
 
-    tot_mask=data_mask*models_mask # combined binary mask
-    Nbands=tot_mask.sum(axis=1) # number of bands
+    tot_mask = data_mask * models_mask # combined binary mask
+    Nbands = tot_mask.sum(axis=1) # number of bands
     
     # derive scalefactors between data and models
-    inter_vals=(tot_mask*models*data[None,:]/data_var[None,:]).sum(axis=1) # interaction term
-    shape_vals=(tot_mask*models*models/data_var[None,:]).sum(axis=1) # model-dependent term (i.e. quadratic 'steepness' of chi2)
-    scale_vals=inter_vals/shape_vals # maximum-likelihood scalefactors
+    inter_vals = (tot_mask * models * data[None,:] / data_var[None,:]).sum(axis=1) # interaction term
+    shape_vals = (tot_mask * models*models / data_var[None,:]).sum(axis=1) # model-dependent term (i.e. quadratic 'steepness' of chi2)
+    scale_vals = inter_vals / shape_vals # maximum-likelihood scalefactors
 
     # compute ln(likelihood)
-    resid=data-scale_vals[:,None]*models # compute scaled residuals
+    resid = data - scale_vals[:,None]*models # compute scaled residuals
     
-    chi2=(tot_mask*resid*resid/data_var[None,:]).sum(axis=1) # compute chi2
-    chi2_mod=chi2-(Nbands-1) # normalize by E[chi2(N-1)]
-    
-    return chi2_mod, Nbands
+    chi2 = (tot_mask * resid*resid / data_var[None,:]).sum(axis=1) # compute chi2
+    chi2_mod = chi2 - (Nbands-1) # normalize by E[chi2(N-1)]
+
+    if return_s:
+        return chi2_mod, Nbands, scale_vals
+    else:
+        return chi2_mod, Nbands
 
 
 
