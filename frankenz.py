@@ -1,30 +1,33 @@
-###### FRANKEN-Z FUNCTIONS ##########
-# Current version (v0) written by Josh Speagle (Harvard University; jspeagle@cfa.harvard.edu)
+###############################
+########## FRANKEN-Z ##########
+###############################
+
+# Flexible Regression over Associated Neighbors with Kernel dEnsity estimatioN for Redshift (Z)
+# Authors: Josh Speagle (Harvard University; jspeagle@cfa.harvard.edu).
 # Released under MIT License.
 # Please see Speagle et al. (2017) arxiv:XXXX.XXXXX for more details.
 
 
+####################################################################################################
 
 
 ########## MODULES ##########
 
-# general environment
+# initializing Pylab environment
 import numpy as np
-import matplotlib
+import matplotlib as mpl
 import scipy
 from numpy import *
-from numpy.random import *
-from numpy.random import choice
 from matplotlib import *
 from matplotlib.pyplot import *
 from scipy import *
 
 # general functions
 import pandas # uniqueness checks
-import sys # print statements
+import sys # outputs
+import os # used to check for files
 from astropy.io import fits # I/O on fits
 from sklearn.externals import joblib # I/O on ML models
-import os # used to check for files
 from scipy import interpolate # interpolation
 
 # machine learning
@@ -35,17 +38,23 @@ from sklearn import base # additional methods
 from scipy import stats
 from scipy import random
 
-# additional memory management
+# random number generation
+from numpy.random import *
+from numpy.random import choice
+
+# manual memory management
 import gc
 
 # confidence intervals
-SIG1=68.2689492/100.
-SIG2=95.4499736/100.
-SIG3=99.7300204/100.
+SIG1 = 68.2689492/100.
+SIG2 = 95.4499736/100.
+SIG3 = 99.7300204/100.
+
+# useful constants
+c = 299792458.0 # speed of light in m/s
 
 
 ########## PLOTTING DEFAULTS ##########
-
 
 # declaring plotting stuff
 from matplotlib.font_manager import FontProperties
@@ -67,303 +76,243 @@ rcParams.update({'ytick.color': 'k'})
 rcParams.update({'font.size': 30})
 
 
+####################################################################################################
 
 
+########## LIKELIHOODS ##########
 
 
-
-
-
-
-########## MODEL FITTING ##########
-
-
-def loglikelihood(data, data_var, data_mask, models, models_var, models_mask):
+def loglikelihood(data, data_err, data_mask, models, models_err, models_mask):
     """
-    Compute -2lnL W/ FIXED SCALING using a set of models W/ ERRORS.
+    Compute -2lnL w/ FIXED scaling using a set of models W/ ERRORS.
 
     Keyword arguments:
-    data -- input fluxes
-    data_var -- input variances
+    data -- input values
+    data_err -- input errors
     data_mask -- mask for missing input data
     models -- collection of comparison models
-    models_var -- model variances
+    models_err -- model errors
     models_mask -- mask for missing model data
 
     Outputs:
     chi2_mod -- -2lnL for each model
-    Nbands -- number of overlapping bands
+    Ndim -- number of observations used in fit
     """
 
-    tot_var = data_var + models_var # combined variance
+    tot_var = square(data_err) + square(models_err) # combined variance
     tot_mask = data_mask * models_mask # combined binary mask
-    Nbands = tot_mask.sum(axis=1) # number of bands
+    Ndim = tot_mask.sum(axis=1) # number of bands
 
     # compute ln(likelihood)    
     resid = data - models # residuals
-    chi2 = (tot_mask * resid*resid / tot_var).sum(axis=1) # compute standard chi2
-    chi2_mod = chi2 - Nbands # normalize by E[chi2(N)]
+    chi2 = (tot_mask * square(resid) / tot_var).sum(axis=1) # compute standard chi2
+    chi2_mod = chi2 - Ndim # normalize by E[chi2(N)]
     
-    return chi2_mod, Nbands
+    return chi2_mod, Ndim
 
 
-
-def loglikelihood_s(data, data_var, data_mask, models, models_var, models_mask, return_s=False):
+def loglikelihood_s(data, data_err, data_mask, models, models_err, models_mask, return_s=False):
     """
-    Compute -2lnL W/ FREE SCALING using a set of models W/O ERRORS.
+    Compute -2lnL W/ FREE scaling using a set of models W/O ERRORS.
 
     Keyword arguments:
-    data -- input fluxes
-    data_var -- input variances
+    data -- input values
+    data_err -- input errors
     data_mask -- mask for missing input data
     models -- collection of comparison models
-    models_var -- model variances (unused)
+    models_err -- model errors
     models_mask -- mask for missing model data
     return_s -- return the maximum-likelihood scalefactor (default=False)
 
     Outputs:
     chi2_mod -- -2lnL for each model
-    Nbands -- number of overlapping bands
+    Ndim -- number of observations used in fit
     scale_vals -- maximum-likelihood model scalefactor
     """
 
     tot_mask = data_mask * models_mask # combined binary mask
-    Nbands = tot_mask.sum(axis=1) # number of bands
+    data_var = square(data_err) # data variance
+    Ndim = tot_mask.sum(axis=1) # number of bands
     
     # derive scalefactors between data and models
     inter_vals = (tot_mask * models * data[None,:] / data_var[None,:]).sum(axis=1) # interaction term
-    shape_vals = (tot_mask * models*models / data_var[None,:]).sum(axis=1) # model-dependent term (i.e. quadratic 'steepness' of chi2)
+    shape_vals = (tot_mask * square(models) / data_var[None,:]).sum(axis=1) # model-dependent term (i.e. quadratic 'steepness' of chi2)
     scale_vals = inter_vals / shape_vals # maximum-likelihood scalefactors
 
     # compute ln(likelihood)
     resid = data - scale_vals[:,None]*models # compute scaled residuals
     
-    chi2 = (tot_mask * resid*resid / data_var[None,:]).sum(axis=1) # compute chi2
-    chi2_mod = chi2 - (Nbands-1) # normalize by E[chi2(N-1)]
+    chi2 = (tot_mask * square(resid) / data_var[None,:]).sum(axis=1) # compute chi2
+    chi2_mod = chi2 - (Ndim-1) # normalize by E[chi2(N-1)]
 
     if return_s:
-        return chi2_mod, Nbands, scale_vals
+        return chi2_mod, Ndim, scale_vals
     else:
-        return chi2_mod, Nbands
+        return chi2_mod, Ndim
 
 
 
+########## MAGNITUDE MAPS ##########
 
 
-
-########## FEATURE MAPS ##########
-
-
-def asinh_mag_map(phot, err, skynoise, zeropoint=None):
+def asinh_mag_map(phot, err, skynoise=None, zeropoints=1.):
     """
-    Map input fluxes/errors to asinh magnitudes (i.e. "Luptitude"; Lupton et al. 1999).
+    Map flux density to asinh magnitude (i.e. "Luptitude"; Lupton et al. 1999).
 
     Keyword arguments:
-    phot -- fluxes
-    err -- flux errors
-    skynoise -- background sky noise (i.e. softening parameter)
-    zeropoint -- flux zero-points (default: 1.)
+    phot -- flux densities
+    err -- associated errors
+    skynoise -- background sky noise (i.e. softening parameter) (default=median(err))
+    zeropoints -- flux zero-points (default=1.)
     
     Outputs:
     asinh_mag -- asinh magnitudes
     asinh_mag_err -- associated transformed errors
+    [skynoise] -- softening parameter (if not originally provided)
     """
 
-    # initialize flux zero-points
-    Nbands=(phot.shape)[-1] # total number of bands
-    if zeropoint is None:
-        zeropoint=ones(Nbands)
+    if skynoise is None:
+        skynoise = median(err, axis=0) # assign softening as median error
 
     # compute Luptitudes 
-    mag_asinh=-2.5/log(10)*(arcsinh(phot/(2*skynoise))+log(skynoise/zeropoint))
-    mag_asinh_err=sqrt(square(2.5*log10(e)*err)/(square(2*skynoise)+square(phot)))
+    mag_asinh = -2.5/log(10) * ( arcsinh(phot/(2*skynoise)) + log(skynoise/zeropoints) ) # mag
+    mag_asinh_err = sqrt( square(2.5*log10(e)*err) / (square(2*skynoise) + square(phot)) ) # err
 
-    return mag_asinh,mag_asinh_err
+    return mag_asinh, mag_asinh_err
 
 
-def inv_asinh_mag_map(mag, magerr, skynoise, zeropoint=None):
+def inv_asinh_mag_map(mag, magerr, skynoise, zeropoints=1.):
     """
-    Map input asinh magnitudes to fluxes.
+    Map asinh magnitude to flux density.
 
     Keyword arguments:
     mag -- asinh magnitudes
-    magerr -- asinh magnitude errors
-    zeropoint -- flux zero-points (default: 1.)
+    magerr -- associated errors
+    skynoise -- background sky noise (i.e. softening parameter)
+    zeropoints -- flux zero-points (default=1.)
 
     Outputs: 
-    phot -- fluxes
-    err -- associated flux errors
+    phot -- flux densities
+    err -- associated transformed errors
     """
 
-    # initialize flux zero-points
-    Nbands=(mag.shape)[-1] # total number of bands
-    if zeropoint is None:
-        zeropoint=ones(Nbands)
+    # compute flux densities
+    phot = sinh( log(10)/-2.5 * mag - log(skynoise/zeropoint) ) * (2*skynoise)
+    err = sqrt( square(magerr) * (square(2*skynoise) + square(phot)) ) / (2.5*log10(e))
 
-    # compute fluxes
-    phot=sinh(-log(10)/2.5*mag-log(skynoise/zeropoint))*(2*skynoise)
-    err=sqrt(square(magerr)*(square(2*skynoise)+square(phot)))/(2.5*log10(e))
+    return phot, err
 
-    return phot,err
 
-def asinh_magcolor_map(phot, err, zeropoint=None, skynoise=None):
+
+########## QUANTIFYING PERFORMANCE ##########
+
+
+def compute_score(y, pred, weights=None, cat_thresh=0.15):
     """
-    Map input fluxes/errors to asinh magnitudes (i.e. "Luptitude"; Lupton et al. 1999) AND colors.
+    Compute quality metrics (scores) between two sets of predictions.
 
     Keyword arguments:
-    phot -- fluxes
-    err -- flux errors
-    zeropoint -- flux zero-points (default: 1.)
-    skynoise -- background sky noise (default: median(err))
+    y -- original targets
+    pred -- associated predictions
+    weights -- weights for computing modified statistics (default=None)
+    cat_thresh -- threshold used for computing catastrophic outliers (|pred-y|/|y| > cat_thresh) (default=0.15)
     
     Outputs:
-    asinh_magcolor -- asinh magnitudes
-    asinh_magcolor_err -- associated transformed errors
-    """
-    
-    # initialize flux zero-points and sky noise levels
-    Nbands=(phot.shape)[-1] # total number of bands
-    if zeropoint is None:
-        zeropoint=ones(Nbands)
-    if skynoise is None:
-        skynoise=median(err,axis=0)
-
-    # compute Luptitudes 
-    mag_asinh=-2.5/log(10)*(arcsinh(phot/(2*skynoise))+log(skynoise/zeropoint))
-    mag_asinh_err=sqrt(square(2.5*log10(e)*err)/(square(2*skynoise)+square(phot)))
-
-    # compute colors
-    color_asinh=mag_asinh[:,:-1]-mag_asinh[:,1:]
-    color_asinh_err=sqrt(square(mag_asinh_err[:,:-1])+square(mag_asinh_err[:,1:]))
-
-    return c_[mag_asinh,color_asinh], c_[mag_asinh_err,color_asinh_err]
-
-
-
-
-
-
-
-
-########## QUANTIFYING PERFORMANCE #############
-
-
-def compute_score(y, pred, weights=None, eta=0.15):
-    """
-    Compute associated quality scores between two sets of matched redshift predictions.
-
-    Keyword arguments:
-    y -- input set of targets
-    pred -- matching set of predictions
-    weights -- weights for computing weighted statistics (default: None)
-    eta -- threshold used for computing catastrophic outliers (|pred-y|/1+y > eta) (default: 0.15)
-    
-    Outputs:
-    mean scores, median scores, f_cat
-    mean scores -- mean(deltaz), std(deltaz), mean(deltaz_p), std(deltaz_p), where deltaz_p=deltaz/(1+y)
-    median scores -- median(deltaz), MAD(deltaz; 1-sigma), median(deltaz_p), MAD(deltaz_p; 1-sigma)
+    mean scores -- [mean(dy), std(dy), mean(dy/y), std(dy/y)]
+    median scores -- [median(dy), MAD(dy; 68%), median(dy/y), MAD(dy/y; 68%)]
     f_cat -- catastrophic outlier fraction
     """
 
+    Ny = len(y) # total number of objects
+                  
     # initialize weights
-    if weights is not None:
-        weights=weights
-    else:
-        weights=ones(len(y))
+    if weights is None:
+        weights = ones(Ny)
 
-    Nobj=sum(weights) # effective number of objects
-    Ny=len(y) # total number of objects
-    
-    sig1=int(SIG1*Nobj) # defining 1-sigma boundary
-    deltaz,deltaz_p=(pred-y),(pred-y)/(1+y) # defining offsets and (1+z)-normalized offsets
+    Nobj = weights.sum() # effective number of objects
+    sig1 = int(SIG1*Nobj) # defining 1-sigma boundary
+    dy, dyp = (pred-y), (pred-y)/y # defining offsets and fractional offsets
 
     # mean stats
-    mean_dz,mean_dzp=average(deltaz,weights=weights),average(deltaz_p,weights=weights) # mean
-    std_dz,std_dzp=sqrt(average((deltaz-mean_dz)**2,weights=weights)),sqrt(average((deltaz_p-mean_dzp)**2,weights=weights)) # scatter
-    mean_stat=array([mean_dz,std_dz,mean_dzp,std_dzp]) # bundle scores
+    mean_dy, mean_dyp = average(dy, weights=weights), average(dyp, weights=weights) # mean
+    std_dy, std_dyp = sqrt( average(square(dy-mean_dy), weights=weights) ), sqrt( average(square(dyp-mean_dyp), weights=weights) ) # standard deviation
+    mean_stat = array([mean_dy, std_dy, mean_dyp, std_dyp]) # bundle scores
     
     # median stats
-    s1,s2=argsort(deltaz),argsort(deltaz_p) # sorted list of deviations (low->high)
-    cdf1,cdf2=cumsum(weights[s1]),cumsum(weights[s2]) # CDF of sorted weights
-    med_dz,med_dzp=deltaz[s1][argmin(abs(cdf1-0.5*Nobj))],deltaz[s2][argmin(abs(cdf2-0.5*Nobj))] # median
-    mad1,mad2=abs(deltaz-med_dz),abs(deltaz_p-med_dzp) # median absolute deviations (MADs)
-    s1,s2=argsort(mad1),argsort(mad2) # sorted list of MADs
-    cdf1,cdf2=cumsum(weights[s1]),cumsum(weights[s2]) # CDF of sorted weights
-    mad_dz,mad_dzp=mad1[s1][argmin(abs(cdf1-SIG1*Nobj))],mad2[s2][argmin(abs(cdf2-SIG1*Nobj))] # scatter
-    med_stat=array([med_dz,mad_dz,med_dzp,mad_dzp]) # bundle scores
-
-    # compute R2 stats
-    #r2_stat=1-sum(weights*deltaz**2)/sum(weights*(y-average(y,weights=weights))**2) # R^2 (correlation coefficient)
-
-    # compute pearsonr stats
-    #temp=[]
-    #wtemp=weights/sum(weights) # normalize weights to 1
-    #for i in xrange(10): # 10 Monte Carlo trials
-    #    idx=choice(Ny,p=wtemp,size=int(Nobj)) # sample objects proportional to weights
-    #    temp.append(stats.pearsonr(y[idx],pred[idx])) # compute Pearson R
-    #pearsonr_coeff=average(temp,axis=0) # average Pearson R
+    s1, s2 = argsort(dy), argsort(dyp) # sorted list of deviations (low->high)
+    cdf1, cdf2 = cumsum(weights[s1]), cumsum(weights[s2]) # CDF of sorted weights
+    med_dy, med_dyp = dy[s1][argmin(abs(cdf1-0.5*Nobj))], dy[s2][argmin(abs(cdf2-0.5*Nobj))] # median
+    
+    mad1, mad2 = abs(dy-med_dy), abs(dyp-med_dyp) # median absolute deviations (MADs)
+    s1, s2 = argsort(mad1), argsort(mad2) # sorted list of MADs
+    cdf1, cdf2 = cumsum(weights[s1]), cumsum(weights[s2]) # CDF of sorted weights
+    mad_dy, mad_dyp = mad1[s1][argmin(abs(cdf1-SIG1*Nobj))], mad2[s2][argmin(abs(cdf2-SIG1*Nobj))] # 68% (1-sigma) interval
+    med_stat = array([med_dy, mad_dy, med_dyp, mad_dyp]) # bundle scores
     
     # catastrophic outliers
-    eta_cat=sum(weights[abs(deltaz_p)>0.15])*1.0/Nobj
+    f_cat = 1.*(weights[abs(dyp)>cat_thresh]).sum() / Nobj
     
-    return mean_stat, med_stat, eta_cat
+    return mean_stat, med_stat, f_cat
 
 
 
 def compute_density_score(dist_base, dist_test, dist_test_err=None):
     """
-    Compute quality scores for two sets of matched densities.
+    Compute quality metrics (scores) between two sets of matched densities.
 
     Keyword arguments:
-    dist_base -- the baseline distribution to be compared to
-    dist_test -- the new distribution to be tested
+    dist_base -- the baseline distribution
+    dist_test -- the distribution to be tested
+    dist_test_err -- associated errors of dist_test
 
     Outputs:
-    [N_poisson statistic, arr_poisson, sel_poisson], AD_statistic
-    N_poisson -- the total Poisson deviation between the two datasets (i.e. chi2)
-    arr_poisson -- standard deviations
-    sel_poisson -- all non-zero terms used in the sum
-    p_poisson -- p-value
-    AD_statistic -- the Anderson-Darling 2-sample test statistics
+    Pois_statistic, AD_statistic, [err_statistic]
+    Pois_statistic -- Poisson test statistics [N_pois, arr_pois, a_sub, p_pois], where:
+        N_pois -- total Poisson deviation
+        arr_pois -- running Poisson deviation
+        a_sub -- sub-selected array results have been computed over
+        p_pois -- p-value (Poisson)
+    AD_statistic -- the Anderson-Darling 2-sample test statistics [ad_stat, ad_crit, p_ad], where:
+        ad_stat -- AD test statistic
+        ad_crit -- critical values (25%, 10%, 5%, 2.5%, 1%)
+        p_ad -- approximate p-value
+    err_statistic -- error-weighted test statistics (same format as Pois_statistic)
     """
 
-    a,b=dist_base.flatten(),dist_test.flatten()
-    if dist_test_err is not None: be=dist_test_err.flatten() # flatten arrays to 1-D
-    N,Na,Nb=len(a),a.sum(),b.sum()
-    a_sub=a>0 # find all positive terms
-    dof=sum(a_sub)
-    dev=b-a    
-    arr_poisson=(dev/sqrt(a))[a_sub] # compute normalized Poisson fluctuation
-    N_poisson=sum(square(arr_poisson)) # total fluctuation
-    p_poisson=1-stats.chi2.cdf(N_poisson,dof) # p-value
+    # flatten arrays to 1-D
+    a, b = dist_base.flatten(), dist_test.flatten()
+    if dist_test_err is not None: be = dist_test_err.flatten()
 
-    a_samp=choice(N,size=int(Na),p=a/Na)
-    b_samp=choice(N,size=int(Nb),p=b/Nb)
+    N, Na, Nb = len(a), 1.*a.sum(), 1.*b.sum() # number and normalizations
+    a_sub = a > 0 # find all strictly positive terms
+    dof = sum(a_sub) # degrees of freedom
+    dev = b - a # absolute deviation
+    arr_poisson = (dev/sqrt(a))[a_sub] # compute normalized Poisson fluctuation
+    N_poisson = sum(square(arr_poisson)) # total fluctuation
+    p_poisson = 1 - stats.chi2.cdf(N_poisson, dof) # p-value
+
+    # drawing samples
+    cdf_a, cdf_b = linspace(0,1,N+1), linspace(0,1,N+1) # initializing CDF
+    cdf_a[1:], cdf_b[1:] = a.cumsum()/Na, b.cumsum()/Nb # computing CDF
+    a_samp = interp(rand(int(Na)), cdf_a, arange(N+1))
+    b_samp = interp(rand(int(Nb)), cdf_b, arange(N+1))
 
     try:
-        N_ad=stats.anderson_ksamp((a_samp,b_samp)) # compute AD 2-sample test score
+        N_ad = stats.anderson_ksamp((a_samp, b_samp)) # compute AD 2-sample test score
     except OverflowError:
-        N_ad=(NaN,NaN,0.0)
+        N_ad = (NaN,NaN,0.0) # assign NaNs if this fails
 
-    if dist_test_err is not None:
-        arr_err=(dev/dist_test_err)[a_sub] # standardized fluctuation
-        N_err=sum(square(arr_err)) # total fluctuation
-        p_err=1-stats.chi2.cdf(N_err,dof) # p-value
-        return [N_poisson, arr_poisson, a_sub, p_poisson], N_ad, [N_err, arr_err, a_sub, p_err]
-    else:
+    if dist_test_err is None:
         return [N_poisson, arr_poisson, a_sub, p_poisson], N_ad
-
-    
-
-
-
-
-
+    else:
+        arr_err = (dev/dist_test_err)[a_sub] # standardized fluctuation (sqrt(N)->err)
+        N_err = sum(square(arr_err)) # total fluctuation
+        p_err = 1 - stats.chi2.cdf(N_err, dof) # p-value
+        return [N_poisson, arr_poisson, a_sub, p_poisson], N_ad, [N_err, arr_err, a_sub, p_err]
 
 
 
-
-########### PDF FUNCTIONS ###############
+########## PDF FUNCTIONS ##########
 
 
 def pdfs_resample(target_grid, target_pdfs, new_grid):
@@ -376,29 +325,29 @@ def pdfs_resample(target_grid, target_pdfs, new_grid):
     new_grid -- new grid
 
     Outputs:
-    resampled PDFs
+    new_PDFs -- resampled PDFs
     """
     
     sys.stdout.write("Resampling PDFs...")
     
-    Nobj,Npoints=len(target_pdfs),len(new_grid) # grab size of inputs
-    new_pdfs=empty((Nobj,Npoints),dtype='float32') # create new array
+    Nobj, Npoints = len(target_pdfs), len(new_grid) # size of inputs
+    new_pdfs = empty((Nobj, Npoints), dtype='float32') # initialize array
+    
     for i in xrange(Nobj):
-        if i%5000==0: 
+        if i%5000 == 0: # print status every 5000 objects
             sys.stdout.write(str(i)+' ')
             sys.stdout.flush()
-        new_pdfs[i]=interp(new_grid,target_grid,target_pdfs[i]) # interpolate PDF
-        new_pdfs[i]/=sum(new_pdfs[i]) # re-normalize
+        new_pdfs[i] = interp(new_grid, target_grid, target_pdfs[i]) # interpolate PDF
+        new_pdfs[i] /= sum(new_pdfs[i]) # re-normalize
         
     sys.stdout.write("done!\n")
 
     return new_pdfs
 
 
-
-def pdfs_summary_statistics(target_grid, target_pdfs, conf_width=0.03, deg_spline='linear'):
+def pdfs_summary_statistics(target_grid, target_pdfs):
     """
-    Compute a range of summary statistics from the input PDFs.
+    Compute summary statistics from input PDFs.
 
     Keyword arguments:
     target_grid -- input grid
@@ -407,185 +356,166 @@ def pdfs_summary_statistics(target_grid, target_pdfs, conf_width=0.03, deg_splin
     deg_spline -- order of spline fit 
 
     Outputs:
-    pdf_mean, pdf_med, pdf_mode, pdf_l68, pdf_h68, pdf_l95, pdf_h95, pdf_std, pdf_conf
     pdf_mean -- mean (first moment)
     pdf_med -- median (50th percentile)
     pdf_mode -- peak (mode)
+    pdf_mc -- Monte Carlo estimate (random)
     pdf_l68 -- lower 68th percentile of CDF
     pdf_h68 -- higher 68th percentile of CDP
     pdf_l95 -- lower 95th percentile of CDF
     pdf_h95 -- higher 95th percentile of CDF
     pdf_std -- standard deviation (sqrt of normalized second moment)
-    pdf_conf -- zConf flag (see Carrasco Kind & Brunner 2013)
     """
 
     # initialize variables
-    Ntest=len(target_pdfs) # number of input pdfs
-    
-    pdf_mean=zeros(Ntest,dtype='float32') # mean (first moment)
-    pdf_std=zeros(Ntest,dtype='float32') # standard deviation (sqrt of normalized second moment)
-    pdf_mode=zeros(Ntest,dtype='float32') # peak (mode)
-    pdf_med=zeros(Ntest,dtype='float32') # median
-    pdf_l95=zeros(Ntest,dtype='float32') # lower 95% confidence interval
-    pdf_l68=zeros(Ntest,dtype='float32') # lower 68% confidence interval
-    pdf_h68=zeros(Ntest,dtype='float32') # upper 68% confidence interval
-    pdf_h95=zeros(Ntest,dtype='float32') # upper 95% confidence interval
-    pdf_conf=zeros(Ntest,dtype='float32') # zConf flag
+    Ntest = len(target_pdfs) # number of input pdfs
+    pdf_mean = zeros(Ntest, dtype='float32') # mean (first moment)
+    pdf_std = zeros(Ntest, dtype='float32') # standard deviation (sqrt of normalized second moment)
+    pdf_mode = zeros(Ntest, dtype='float32') # peak (mode)
+    pdf_mc = zeros(Ntest, dtype='float32') # Monte Carlo (random)
+    pdf_med = zeros(Ntest, dtype='float32') # median
+    pdf_l95 = zeros(Ntest, dtype='float32') # lower 95% confidence interval
+    pdf_l68 = zeros(Ntest, dtype='float32') # lower 68% confidence interval
+    pdf_h68 = zeros(Ntest, dtype='float32') # upper 68% confidence interval
+    pdf_h95 = zeros(Ntest, dtype='float32') # upper 95% confidence interval
 
 
     # confidence intervals
-    i1=0.68 # interval 1
-    i2=0.95 # interval 2
-    m=0.5 # median
-    l2=m-i2/2 # lower 2
-    l1=m-i1/2 # lower 1
-    u1=m+i1/2 # upper 1
-    u2=m+i2/2 # upper 2
+    i1 = 0.68 # interval 1
+    i2 = 0.95 # interval 2
+    m = 0.5 # median
+    l2 = m-i2/2 # lower 2
+    l1 = m-i1/2 # lower 1
+    u1 = m+i1/2 # upper 1
+    u2 = m+i2/2 # upper 2
 
     
     sys.stdout.write("Computing PDF quantities...")
     
     for i in xrange(Ntest):
-        if i%5000==0: 
+        if i%5000 == 0: # print status every 5000 objects
             sys.stdout.write(str(i)+' ')
             sys.stdout.flush()
         
         # mean quantities
-        pdf_mean[i]=dot(target_pdfs[i],target_grid)
-        pdf_std[i]=sqrt(dot(target_pdfs[i],square(target_grid))-square(pdf_mean[i]))
+        pdf_mean[i] = dot(target_pdfs[i], target_grid)
+        pdf_std[i] = sqrt( dot(target_pdfs[i], square(target_grid))-square(pdf_mean[i]) )
         
         # mode quantities
-        pdf_mode[i]=target_grid[argmax(target_pdfs[i])]
+        pdf_mode[i] = target_grid[argmax(target_pdfs[i])]
         
         # cumulative distribution function
-        cdf=cumsum(target_pdfs[i]) # original CDF (normalized to 1)
-        pdf_med[i],pdf_h68[i],pdf_l68[i],pdf_h95[i],pdf_l95[i]=interp([m,u1,l1,u2,l2],cdf,target_grid) # median quantities
-        
-        # confidence flag
-        conf_range=conf_width*(1+pdf_med[i]) # redshift integration range
-        conf_high,conf_low=interp([pdf_med[i]+conf_range,pdf_med[i]-conf_range],target_grid,cdf) # high/low CDF values
-        pdf_conf[i]=conf_high-conf_low # zConf
+        cdf = target_pdfs[i].cumsum() # original CDF (normalized to 1)
+        pdf_med[i], pdf_mc[i], pdf_h68[i], pdf_l68[i], pdf_h95[i], pdf_l95[i] = interp([m, rand(), u1, l1, u2, l2], cdf, target_grid) # median quantities
         
     sys.stdout.write("done!\n")
 
-    return pdf_mean, pdf_med, pdf_mode, pdf_l68, pdf_h68, pdf_l95, pdf_h95, pdf_std, pdf_conf
+    return pdf_mean, pdf_med, pdf_mode, pdf_mc, pdf_l68, pdf_h68, pdf_l95, pdf_h95, pdf_std
 
 
 
+########## KERNAL DENSITY ESTIMATION ##########
 
 
-
-
-
-
-
-
-############# KERNAL DENSITY ESTIMATION ################
-
-
-def gaussian(mu, var, x):
+def gaussian(mu, std, x):
     """
     Compute (normalized) Gaussian kernal.
 
     Keyword arguments:
     mu -- mean (center)
-    var -- variance (width)
+    var -- standard deviation (width)
     x -- input grid
 
     Outputs:
-    N(x|mu,var)
+    Normal(x | mu, std)
     """
     
-    dif=(x-mu) # difference
-    norm=1./sqrt(2*pi*var) # normalization
+    dif = x - mu # difference
+    norm = 1. / sqrt(2*pi) / std # normalization
     
-    return norm*exp(-0.5*dif*dif/var)
+    return norm * exp(-0.5 * square(dif/std))
 
 
-
-def pdf_kde(y, y_var, y_wt, pdf_grid, delta_grid, Ngrid, wt_thresh=1e-3):
+def pdf_kde(y, y_std, y_wt, x, dx, Ny, Nx, sig_thresh=5, wt_thresh=1e-3):
     """
-    Compute smoothed PDF from point estimates using kernel density estimation (KDE) from a set of weighted predictions.
+    Compute smoothed PDF using kernel density estimation.
 
     Keyword arguments:
-    y -- observed data
-    y_var -- variance of observed data
-    y_wt -- weight of observed data
-    pdf_grid -- underlying grid used to compute the probability distribution function (PDF)
-    delta_grid -- spacing of the grid
-    Ngrid -- number of elements in the grid
-    wt_thresh -- wt/wt_max threshold used to clip observations (default: 1e-3)
+    y -- Gaussian kernel mean
+    y_std -- Gaussian kernel standard deviation
+    y_wt -- associated weight
+    x -- PDF grid
+    dx -- PDF spacing
+    Ny -- number of objects
+    Nx -- number of grid elements
+    sig_thresh -- +/-sigma threshold for clipping kernels (default=5)
+    wt_thresh -- wt/wt_max threshold for clipping observations (default=1e-3)
 
     Outputs:
-    Probability distribution function (PDF) evaluated over pdf_grid
+    pdf -- probability distribution function (PDF) evaluated over x
     """
 
-    # clipping kernel to (gridded) +/-5 sigma
-    centers=((y-pdf_grid[0])/delta_grid).astype(int) # gridded centers
-    offsets=(5*sqrt(y_var)/delta_grid).astype(int) # gridded 5-sigma offsets
-    uppers,lowers=centers+offsets,centers-offsets # upper/lower bounds
-    uppers[uppers>Ngrid],lowers[lowers<0]=Ngrid,0 # limiting to grid edges
+    # clipping kernel
+    centers=((y-x[0]) / dx).astype(int) # discretized centers
+    offsets = (sig_thresh * y_std / dx).astype(int) # discretized offsets
+    uppers, lowers = centers+offsets, centers-offsets # upper/lower bounds
+    uppers[uppers>Nx], lowers[lowers<0] = Nx, 0 # limiting to grid edges
 
     # initialize PDF
-    pdf=zeros(Ngrid)
+    pdf = zeros(Nx)
 
     # limit analysis to observations with statistically relevant weight
-    sel_arr=y_wt>(wt_thresh*max(y_wt))
+    sel_arr = y_wt > (wt_thresh*y_wt.max())
 
     # compute PDF
-    for i in arange(len(y_wt))[sel_arr]:
-        pdf[lowers[i]:uppers[i]]+=y_wt[i]*gaussian(y[i],y_var[i],pdf_grid[lowers[i]:uppers[i]]) # stack (weighted) Gaussian kernels on array segments
+    for i in arange(Ny)[sel_arr]: # within selected observations
+        pdf[lowers[i]:uppers[i]] += y_wt[i] * gaussian(y[i], y_std[i], x[lowers[i]:uppers[i]]) # stack weighted Gaussian kernel over array slic
     
     return pdf
 
 
-
-# Compute smoothed PDF using kernel density estimation (KDE) from a set of WEIGHTED predictions
-def pdf_kde_dict(ydict, ywidth, y_pos, y_idx, y_wt, pdf_grid, delta_grid, Ngrid, wt_thresh=1e-3):
+def pdf_kde_dict(ydict, ywidth, y_pos, y_idx, y_wt, x, dx, Ny, Nx, wt_thresh=1e-3):
     """
-    Compute smoothed PDF from point estimates using kernel density estimation (KDE) from a set of weighted predictions using a PRE-COMPUTED DICTIONARY.
+    Compute smoothed PDF from point estimates using KDE utilizing a PRE-COMPUTED DICTIONARY.
 
     Keyword arguments:
     ydict -- dictionary of kernels
     ywidth -- associated widths of kernels
     y_pos -- discretized position of observed data
-    y_idx -- corresponding index of kernel drawn from dictionary
-    y_wt -- weight of observed data
-    pdf_grid -- underlying grid used to compute the probability distribution function (PDF)
-    delta_grid -- spacing of the grid
-    Ngrid -- number of elements in the grid
-    wt_thresh -- wt/wt_max threshold used to clip observations (default: 1e-3)
+    y_idx -- corresponding index of kernel from dictionary
+    y_wt -- associated weight
+    x -- PDF grid
+    dx -- PDF spacing
+    Ny -- number of objects
+    Nx -- number of grid elements
+    wt_thresh -- wt/wt_max threshold for clipping observations (default=1e-3)
 
     Outputs:
-    Probability distribution function (PDF) evaluated over pdf_grid
+    pdf -- probability distribution function (PDF) evaluated over x
     """
 
     # initialize PDF
-    pdf=zeros(Ngrid) 
+    pdf = zeros(Nx) 
 
     # limit analysis to observations with statistically relevant weight
-    sel_arr=y_wt>(wt_thresh*max(y_wt))
+    sel_arr = y_wt > (wt_thresh*y_wt.max())
 
-    # compute PDF by stacking kernels
-    for i in arange(len(y_idx))[sel_arr]: # run over selected observations
-        idx,yp=y_idx[i],y_pos[i] # dictionary element, kernel center
-        yw=ywidth[idx] # kernel width
-        pdf[yp-yw:yp+yw+1]+=y_wt[i]*ydict[idx] # stack weighted kernel from dictionary on array slice
+    # compute PDF
+    for i in arange(Ny)[sel_arr]: # within selected observations
+        idx = y_idx[i] # dictionary element
+        yp = y_pos[i] # kernel center
+        yw = ywidth[idx] # kernel width
+        pdf[yp-yw:yp+yw+1] += y_wt[i] * ydict[idx] # stack weighted Gaussian kernel over array slice
     
     return pdf
 
 
+####################################################################################################
 
 
+########## WINBET ##########
 
-
-
-    
-
-
-########### WINBET ###############
-
-
+### THIS HAS TO BE ENTIRELY RE-WRITTEN
 class WINBET():
     """
     The Weighted Inference with Naive Bayes and Extra Trees (WINBET) class. 
@@ -751,123 +681,118 @@ class WINBET():
         return phot_impute,var_impute
 
 
-
-
 ########### FRANKEN-Z ###############
 
 
 class FRANKENZ():
     """
-    The Full Regression over Associated Neighbors using Kernel dEsity estimatioN for Redshifts (FRANKEN-Z) class. 
+    The Flexible Regression over Associated Neighbors using Kernel dEsity estimatioN for Redshift (FRANKEN-Z) class. 
 
     Functions: 
     predict -- generates redshift PDF predictions
     """
     
-    def __init__(self, N_members=100, n_neighbors=10, radius=1.0, algorithm='kd_tree', leaf_size=50, p=2, metric='minkowski', metric_params=None, n_jobs=1):
+    def __init__(self, N_members=100, n_neighbors=10, radius=1.0, algorithm='kd_tree', leaf_size=50,
+                 p=2, metric='minkowski', metric_params=None, n_jobs=1):
         """
         Initializes the instance. 
 
         Keyword arguments:
         N_members -- number of members in ensemble
-        See sklearn.neighbors.NearestNeighbors for a description of additional keyword arguments and their defaults.
+        See sklearn.neighbors.NearestNeighbors for a description of additional keyword arguments.
         """
 
         # establish baseline model
-        self.knn=neighbors.NearestNeighbors(n_neighbors=n_neighbors,radius=radius,algorithm=algorithm,leaf_size=leaf_size,p=p,metric=metric,metric_params=metric_params,n_jobs=1)
-        self.NNEIGHBORS=n_neighbors # number of nearest neighbors
-        self.metric=metric # chosen distance metric
-        self.NBRUTEFORCE=50 # leaf size (for brute force calculation)
-        self.NMEMBERS=N_members # ensemble size
+        self.knn = neighbors.NearestNeighbors(n_neighbors=n_neighbors, radius=radius, algorithm=algorithm,
+                                              leaf_size=leaf_size, p=p, metric=metric, metric_params=metric_params, n_jobs=1)
+        self.NNEIGHBORS = n_neighbors # number of nearest neighbors (per member)
+        self.metric = metric # chosen distance metric
+        self.NBRUTEFORCE = leaf_size # leaf size (for brute force calculation)
+        self.NMEMBERS = N_members # ensemble size (number of Monte Carlo draws)
 
 
-
-    def predict(self, phot, err, masks, phot_test, err_test, masks_test, f_func=asinh_mag_map, ll_func=loglikelihood, impute_train=None, impute_test=None, subsample=None):
+    def predict(self, x_train, xe_train, xm_train, x_targ, xe_targ, xm_targ,
+                feature_map=asinh_mag_map, ll_func=loglikelihood, impute_train=None, impute_targ=None):
         """
-        Generate Full Regression over Associated Neighbors with Kernel dENsity redshift (FRANKEN-Z) PDFs.
-        Objects in the training set to be fit (i.e. regressed over) are selected from kd-trees based on a set of transformed FEATURES.
-        Log-likelihoods are computed directly from the corresponding FLUXES using the input log-likelihood function.
-        Errors on the TRAINING AND TESTING data are incorporated using Monte Carlo methods.
+        Compute log-likelihoods over neighboring training objects.
 
         Keyword arguments:
-        phot[_test] -- fluxes (training/testing)
-        err[_test] -- flux errors (training/testing)
-        masks[_test] -- flux masks (training/testing)        
-        f_func -- feature function (default: asinh_magnitude).
-        ll_func -- log-likelihood function (default: loglikelihood)
-        impute[_train/test] -- WINBET instances used for imputing missing fluxes (default: None)
-        subsample -- number of dimensions to subsample (default: None)
+        x_[train/targ] -- features (training/testing)
+        xe_[train/targ] -- feature errors (training/testing)
+        xm_[train/targ] -- feature masks (training/testing)        
+        feature_map -- feature transformation map (default=asinh_mag_map)
+        ll_func -- log-likelihood function (default=loglikelihood)
+        impute_train -- 
+        impute_[train/targ] -- instances used to impute missing quantities (default=None)
 
         Outputs:
         model_objects -- unique matched object indices
         model_Nobj -- number of unique matched objects
-        model_ll -- log-likelihoods
-        model_Nbands -- number of bands used to compute log-likelihoods
+        model_ll -- -2ln(likelihood)
+        model_Ndim -- number of overlapping observations used to compute log-likelihoods
         """
 
-        # initialize stuff
-        Ntrain,Ntest=len(phot),len(phot_test) # size of training/testing sets
-        Npred=self.NNEIGHBORS*self.NMEMBERS # number of non-unique predictions
-        Nf=len(phot[0]) # number of filters
-        model_objects=empty((Ntest,Npred),dtype='int') # UNIQUE collection of training object indices selected for each test object
-        model_Nobj=empty(Ntest,dtype='int') # number of unique training objects selected for each test object
-        model_indices=empty((self.NMEMBERS,Ntest,self.NNEIGHBORS),dtype='int') # NON-UNIQUE collection of training object indices selected for each test object
-        model_ll=empty((Ntest,Npred),dtype='float32') # log-likelihood
-        model_Nbands=empty((Ntest,Npred),dtype='uint8') # number of bands used in fit
+        Ntrain, Ntarg = len(x_train), len(x_targ) # size of training/testing sets
+        Npred = self.NNEIGHBORS * self.NMEMBERS # number of non-unique predictions
+        Ndim = x_train.shape[1] # number of dimensions
 
-        var,var_test=square(err),square(err_test)
-        skynoise=median(err,axis=0)
+        model_indices = empty((self.NMEMBERS, Ntarg, self.NNEIGHBORS), dtype='int') # NON-UNIQUE collection of training object indices selected for each target object
 
-        # find nearest neighbors
-        for i in xrange(self.NMEMBERS):
-            sys.stdout.write(str(i)+': ')
+        model_Nobj = empty(Ntarg, dtype='int') # number of unique training objects selected for each target object
+        model_objects = empty((Ntarg, Npred), dtype='int') # UNIQUE collection of training object indices selected for each target object
+        model_ll = empty((Ntarg, Npred), dtype='float32') # log-likelihood
+        model_Ndim = empty((Ntarg, Npred), dtype='uint8') # number of dimensions used in fit
+
+        # neighbor selection step
+        for i in xrange(self.NMEMBERS): # for each member of the ensemble
+            sys.stdout.write('('+str(i)+') ') # print progress
             sys.stdout.flush()
 
-            # subsample features
-            if subsample is None:
-                xdim=arange(Nf) # if not initialized, use all dimensions
-            elif isinstance(subsample,int):
-                xdim=choice(Nf,size=subsample,replace=False) # if int, generate random subsample
-            else:
-                xdim=subsample # else, assume indices of dimensions to subsample
-
-            # train kd-trees
+            # impute missing training values
             if impute_train is not None:
-                phot_t,var_t=impute_train.impute(phot,var,masks,impute_type='random')
-                phot_t=normal(phot_t,sqrt(var_t))
+                x_train_t, xe_train_t = impute_train.impute(x_train, xe_train, xm_train, impute_type='random') # impute values
+                x_train_t = normal(x_train_t, xe_train_t) # jitter
             else:
-                phot_t=normal(phot,err).astype('float32') # perturb fluxes
-            X_t=f_func(phot_t,err,skynoise)[0] # map to feature space
-            knn=base.clone(self.knn).fit(X_t[:,xdim]) # train kd-tree
+                x_train_t, xe_train_t = normal(x_train, xe_train).astype('float32'), xe_train # jitter
 
-            # query kd-trees
-            if impute_test is not None:
-                phot_test_t,var_test_t=impute_test.impute(phot_test,var_test,masks_test,impute_type='random')
-                phot_test_t=normal(phot_test_t,sqrt(var_test_t))
+            # impute missing target values
+            if impute_targ is not None:
+                x_targ_t, xe_targ_t = impute_targ.impute(x_targ, xe_targ, xm_targ, impute_type='random')
+                x_targ_t = normal(x_targ_t, xe_targ_t)
             else:
-                phot_test_t=normal(phot_test,err_test).astype('float32') # perturb fluxes
-            X_test_t=f_func(phot_test_t,err_test,skynoise)[0] # map to feature space
-            model_indices[i]=knn.kneighbors(X_test_t[:,xdim],return_distance=False) # find neighbors
+                x_targ_t, xe_targ_t = normal(x_targ, xe_targ).astype('float32'), xe_targ # perturb fluxes
 
-        # select/compute log-likelihoods to unique subset of neighbors
-        for i in xrange(Ntest):
-            midx_unique=pandas.unique(model_indices[:,i,:].flatten()) # unique indices
-            Nidx=len(midx_unique) # number of unique indices
-            model_objects[i][:Nidx]=midx_unique
-            model_objects[i][Nidx:]=-99
-            model_Nobj[i]=Nidx
+            # transform features
+            X_train_t, Xe_train_t = feature_map(x_train_t, xe_train_t) # training data
+            X_targ_t, Xe_targ_t = feature_map(x_targ_t, xe_targ_t) # testing data
 
-            # compute log-likelihoods and Nbands
-            model_ll[i][:Nidx],model_Nbands[i][:Nidx]=ll_func(phot_test[i],var_test[i],masks_test[i],phot[midx_unique],var[midx_unique],masks[midx_unique])
+            # find neighbors
+            knn = base.clone(self.knn).fit(X_train_t) # train k-d tree
+            model_indices[i] = knn.kneighbors(X_targ_t, return_distance=False) # query k-d tree
+            
 
-            if i%5000==0: 
-                sys.stdout.write(str(i)+' ') # counter
+        # log-likelihood step
+        for i in xrange(Ntarg): # for each target object
+            midx_unique = pandas.unique(model_indices[:,i,:].flatten()) # select unique indices
+            Nidx = len(midx_unique) # number of unique indices
+            model_Nobj[i] = Nidx
+            
+            model_objects[i][:Nidx] = midx_unique # assign unique indices
+            model_objects[i][Nidx:] = -99 # right-pad with defaut values
+
+            # compute log-likelihoods
+            model_ll[i][:Nidx], model_Ndim[i][:Nidx] = ll_func(x_targ[i], xe_targ[i], xm_targ[i],
+                                                               x_train[midx_unique], xe_train[midx_unique], xm_train[midx_unique])
+            model_ll[i][Nidx:], model_Ndim[i][Nidx:] = -99., -99.
+
+            if i%5000==0: # update status every 5000 objects
+                sys.stdout.write(str(i)+' ')
                 sys.stdout.flush()
                 gc.collect() # garbage collect
     
         sys.stdout.write('done!\n')
 
-        return model_objects,model_Nobj,model_ll,model_Nbands
+        return model_objects, model_Nobj, model_ll, model_Ndim
 
 
 
@@ -881,7 +806,7 @@ class FRANKENZ():
         
 
 
-########### INPUT/OUTPUT OPERATIONS ###############
+########## INPUT/OUTPUT OPERATIONS ##########
 
 
 class ReadParams():
@@ -890,12 +815,15 @@ class ReadParams():
     """
 
     def __init__(self, config_file):
+        """
+        Process configuration file.
+        """
 
         self.filename = config_file # filename
 
         # read in file
-        f=open(config_file,'r')
-        self.lines=f.readlines()
+        f = open(config_file, 'r')
+        self.lines = f.readlines()
         f.close()
 
         # process file
@@ -904,8 +832,8 @@ class ReadParams():
         # process additional configuration files
         for param in self.param_names:
             if 'CONFIG_' in param:
-                fname=self.params[param] # grab filename
-                exec("self."+param+"=ReadParams(self.params['HOME']+fname)") # assign ReadParams output to associated variable name
+                fname = self.params[param] # grab filename
+                exec("self." + param + "=ReadParams(self.params['HOME']+fname)") # assign ReadParams output to associated variable name
 
 
     def _process_params(self):
@@ -913,37 +841,37 @@ class ReadParams():
         Process input parameters and add them to the class dictionary.
         """
 
-        params={} # parameters
-        formats={} # format of parameters
-        self.param_names=[] # parameter names
+        params = {} # parameters
+        formats = {} # format of parameters
+        self.param_names = [] # parameter names
 
         # extract parameters
         for line in self.lines:
             if (line.startswith('#') | line.startswith(' ')) is False:
 
                 # split line
-                lsplit=line.split()
+                lsplit = line.split()
 
                 # assign name and parameter
-                if len(lsplit)>=2:
-                    lsplit[0]=lsplit[0][:-1]
-                    params[lsplit[0]]=lsplit[1]
+                if len(lsplit) >= 2:
+                    lsplit[0] = lsplit[0][:-1]
+                    params[lsplit[0]] = lsplit[1]
                     self.param_names.append(lsplit[0])
 
                     # (re)assign formats
                     try:
-                        flt=float(lsplit[1])
-                        formats[lsplit[0]]='f'
-                        params[lsplit[0]]=flt
+                        flt = float(lsplit[1])
+                        formats[lsplit[0]] = 'f'
+                        params[lsplit[0]] = flt
                     except:
-                        formats[lsplit[0]]='s'
+                        formats[lsplit[0]] = 's'
 
                     if params[lsplit[0]] == 'None':
                         params[lsplit[0]] = None
                         formats[lsplit[0]] = 'n'
 
-        self.params=params
-        self.formats=formats
+        self.params = params
+        self.formats = formats
 
 
 
@@ -960,59 +888,46 @@ class ReadFilters():
         Npoints -- number of points used to interpolate filter transmission curves
         """
 
-        c=299792458.0 # speed of light in m/s
         
-        f=open(filter_list)
-        self.filters=[]
-        self.filenames=[]
+        f = open(filter_list) # open file list
+        
+        self.filters = []
+        self.filenames = []
+        
         for line in f:
             lsplit = line.split()
-            self.filters.append(lsplit[0])
-            self.filenames.append(lsplit[1])
+            self.filters.append(lsplit[0]) # filter name
+            self.filenames.append(lsplit[1]) # file name
+            
         f.close()
 
-        self.NFILTER=len(self.filters)
+        self.NFILTER = len(self.filters) # number of filters
         
-        self.fw=[0.]*self.NFILTER
-        self.ft=[0.]*self.NFILTER
+        self.fw = [0.]*self.NFILTER # filter wavelengths
+        self.ft = [0.]*self.NFILTER # filter transmissions
 
         for i in xrange(self.NFILTER):
-            self.fw[i],self.ft[i]=swapaxes(loadtxt(path+self.filenames[i]),0,1)
+            self.fw[i], self.ft[i] = swapaxes(loadtxt(path+self.filenames[i]), 0, 1) # load file and swap dimensions
 
-        self.lambda_eff=zeros(self.NFILTER)
+        self.lambda_eff=zeros(self.NFILTER) # effective wavelengths
 
         for i in xrange(self.NFILTER):
             nuMax=0.999*c/(min(self.fw[i])*1e-10) # max frequency
             nuMin=1.001*c/(max(self.fw[i])*1e-10) # min frequency
             nuInc=(nuMax-nuMin)/Npoints # increment (linear)
             nu=arange(nuMin,nuMax+nuInc,nuInc) # frequency array
-            lnu=log(nu)
-            wave=c/nu # convert to lambda
-            lwave=log(wave)
+            lnu=log(nu) # log(frequency)
+            wave=c/nu # convert to wavelength
+            lwave=log(wave) # log(wavelength)
 
-            func=interpolate.interp1d(self.fw[i],self.ft[i],kind='linear') # spline filter
-            temp=func(1e10*wave) # transmission (in Angstroms)
-
-            top=trapz(temp*lwave,lnu)
-            bottom=trapz(temp,lnu)
-            self.lambda_eff[i]=exp(top/bottom)*1e10 # effective wavelength of filter
+            temp = interp(1e10*wave, self.fw[i],self.ft[i]) # interpolate filter transmission
+            top = trapz(temp*lwave,lnu) # numerator
+            bottom = trapz(temp,lnu) # denominator
+            self.lambda_eff[i]=exp(top/bottom)*1e10 # compute effective wavelength [A]
 
 
 
-
-
-
-
-
-
-
-
-
-        
-    
-        
-
-########### DICTIONARIES ###############
+########## DICTIONARIES ##########
 
 
 class RedshiftDict():
@@ -1027,94 +942,108 @@ class RedshiftDict():
 
         Keyword arguments:
         rparams -- redshift configuration parameters (see class::ReadParams)
-        sigma_trunc -- number of standard deviations used before truncating the kernels (default: 5)
+        sigma_trunc -- number of standard deviations used before truncating the kernels (default=5)
         """
 
-        # discrete kernel parameters
-        self.lze_grid=linspace(rparams['DLZ'],rparams['DLZ_MAX'],int(rparams['N_DICT'])) # Gaussian dictionary parameter grid
-        self.dlze=self.lze_grid[1]-self.lze_grid[0] # kernel spacing
+        self.Ndict = int(rparams['N_DICT']) # number of dictionary elements
 
-        # high-res log(1+z) grid
-        self.res=rparams['RES']
-        self.dlz_highres=rparams['DLZ']/rparams['RES'] # high-res spacing
-        self.Npad=int(sigma_trunc*rparams['DLZ_MAX']/self.dlz_highres) # padding on ends of grid (for sliding addition)
-        self.lzgrid_highres=arange(log(1+rparams['ZMIN']),log(1+rparams['ZMAX'])+self.dlz_highres,self.dlz_highres) # high-res grid
-        self.lzgrid_highres=append(arange(log(1+rparams['ZMIN'])-self.dlz_highres*self.Npad,log(1+rparams['ZMIN']),self.dlz_highres),self.lzgrid_highres) # left-pad
-        self.lzgrid_highres=append(self.lzgrid_highres,arange(log(1+rparams['ZMAX'])+self.dlz_highres,log(1+rparams['ZMAX'])+self.dlz_highres*(self.Npad+1),self.dlz_highres)) # right-pad
-        self.Nz_highres=len(self.lzgrid_highres) # size of grid
+        # discrete kernel parameters
+        self.lze_grid = linspace(rparams['DLZ'], rparams['DLZ_MAX'], self.Ndict) # Gaussian dictionary parameter grid
+        self.dlze = self.lze_grid[1] - self.lze_grid[0] # kernel spacing
+
+        # high-res ln(1+z) grid
+        self.res = int(rparams['RES']) # resolution
+        self.dlz_highres = rparams['DLZ'] / rparams['RES'] # high-res spacing
+        self.Npad = int(sigma_trunc*rparams['DLZ_MAX'] / self.dlz_highres) # padding on ends of grid (for sliding addition)
+        self.lzgrid_highres = arange(log(1+rparams['ZMIN']), log(1+rparams['ZMAX']) + self.dlz_highres, self.dlz_highres) # high-res grid
+
+        # left pad
+        lpad = arange(log(1+rparams['ZMIN']) - self.dlz_highres*self.Npad, log(1+rparams['ZMIN']), self.dlz_highres)
+        self.lzgrid_highres = append(lpad, self.lzgrid_highres)
+
+        # right pad
+        rpad = arange(log(1+rparams['ZMAX']) + self.dlz_highres, log(1+rparams['ZMAX']) + self.dlz_highres*(self.Npad+1), self.dlz_highres)
+        self.lzgrid_highres = append(self.lzgrid_highres, rpad)
+        
+        self.Nz_highres = len(self.lzgrid_highres) # size of high-res grid
 
         # effective bounds of high-res grid
-        self.zmin_idx_highres=argmin(abs(self.lzgrid_highres-log(1+rparams['ZMIN']))) # minimum
-        self.zmax_idx_highres=argmin(abs(self.lzgrid_highres-log(1+rparams['ZMAX']))) # maximum
-        self.zmax_idx_highres=self.zmin_idx_highres+int(ceil((self.zmax_idx_highres-self.zmin_idx_highres)/rparams['RES'])*rparams['RES']) # adding left-pad and offset
+        self.zmin_idx_highres = argmin( abs(self.lzgrid_highres - log(1+rparams['ZMIN'])) ) # minimum
+        self.zmax_idx_highres = argmin( abs(self.lzgrid_highres - log(1+rparams['ZMAX'])) ) # maximum
+        self.zmax_idx_highres = self.zmin_idx_highres + int( ceil((self.zmax_idx_highres - self.zmin_idx_highres) / rparams['RES']) * rparams['RES'] ) # adding left-pad and offset
 
         # lower-res log(1+z) grid
-        self.dlz=rparams['DLZ'] # dlog(1+z)
-        self.lzgrid=arange(self.lzgrid_highres[self.zmin_idx_highres],self.lzgrid_highres[self.zmax_idx_highres],self.dlz) # log(1+z) grid
-        self.Nz=len(self.lzgrid) # number of elements
+        self.dlz = rparams['DLZ'] # dln(1+z)
+        self.lzgrid = arange(self.lzgrid_highres[self.zmin_idx_highres], self.lzgrid_highres[self.zmax_idx_highres], self.dlz) # ln(1+z) grid
+        self.Nz = len(self.lzgrid) # number of elements
 
         # corresponding redshift grids
-        self.zgrid=exp(self.lzgrid)-1 # low-res z grid
-        self.znorm=(self.zgrid[1]-self.zgrid[0])*self.zgrid+(self.zgrid[1]-self.zgrid[0]) # normalizations (for conversions from log(1+z) to z)
-        self.znorm/=self.znorm[0]
+        self.zgrid_highres = exp(self.lzgrid_highres[self.zmin_idx_highres:self.zmax_idx_highres]) - 1 # high-res z grid
+        self.zgrid = exp(self.lzgrid) - 1 # low-res z grid
 
         # create dictionary
-        self.lze_width=ceil(self.lze_grid*sigma_trunc/self.dlz_highres).astype('int') # width of kernel
-        self.lze_dict=[gaussian(self.lzgrid_highres[self.Nz_highres/2],square(self.lze_grid[i]),self.lzgrid_highres[self.Nz_highres/2-self.lze_width[i]:self.Nz_highres/2+self.lze_width[i]+1])
-                       for i in xrange(int(rparams['N_DICT']))] # dictionary
-        self.Ndict=len(self.lze_dict) # number of dictionary elements
+        self.lze_width = ceil(self.lze_grid*sigma_trunc / self.dlz_highres).astype('int') # width of kernel
+        self.lze_dict = [gaussian(mu=self.lzgrid_highres[self.Nz_highres/2], std=self.lze_grid[i],
+                                  x=self.lzgrid_highres[self.Nz_highres/2-self.lze_width[i]:self.Nz_highres/2+self.lze_width[i]+1])
+                         for i in xrange(self.Ndict)] # dictionary
         
         # output redshift grid
-        self.zgrid_out=arange(rparams['ZMIN_OUT'],rparams['ZMAX_OUT']+rparams['DZ_OUT'],rparams['DZ_OUT']) # output z grid
-        self.dz_out=rparams['DZ_OUT'] # output dz
-        self.dz_out_highres=rparams['DZ_OUT']/rparams['RES_OUT'] # output high-resolution dz
-        self.Nz_out=len(self.zgrid_out) # number of elements
+        self.zgrid_out = arange(rparams['ZMIN_OUT'], rparams['ZMAX_OUT']+rparams['DZ_OUT'], rparams['DZ_OUT']) # output z grid
+        self.dz_out = rparams['DZ_OUT'] # output dz
+        self.dz_out_highres = rparams['DZ_OUT'] / rparams['RES_OUT'] # output high-resolution dz
+        self.Nz_out = len(self.zgrid_out) # number of elements
         
 
     def fit(self, lz, lze):
         """
-        Map Gaussian redshift PDFs onto the log(1+z) dictionary.
+        Map Gaussian ln(1+z) PDFs onto the ln(1+z) dictionary.
 
         Keyword arguments:
-        lz -- log(1+z) means
-        lze -- log(1+z) errors (i.e. z/(1+z))
+        lz -- ln(1+z) means
+        lze -- ln(1+z) standard deviation (i.e. dz/(1+z))
 
         Outputs:
         lz_idx -- corresponding dictionary grid indices (high-resolution)
         lze_idx -- corresponding dictionary kernel indices (high-resolution)
         """
-        lz_idx=((lz-self.lzgrid_highres[0])/self.dlz_highres).round().astype('int')
-        lze_idx=((lze-self.lze_grid[0])/self.dlze).round().astype('int')
-
-        return lz_idx,lze_idx
+        
+        lz_idx = ( (lz-self.lzgrid_highres[0]) / self.dlz_highres ).round().astype('int') # discretize ln(1+z)
+        lze_idx = ( (lze-self.lze_grid[0]) / self.dlze ).round().astype('int') # discretize dz/(1+z)
+        lze_idx[lze_idx >= len(self.lze_grid)] = len(self.lze_grid) - 1 # impose error ceiling
+        lze_idx[lze_idx < 0] = 0. # impose error floor
+        
+        return lz_idx, lze_idx
 
 
         
 class PDFDict():
     """
-    Set up underlying grids and kernsl used to compute PDFs for ancillary parameters.
+    Set up underlying grids and kernels used to compute PDFs for ancillary parameters.
     """
 
     
-    def __init__(self, pparams, sigma_trunc=5.0):
+    def __init__(self, pparams, sigma_trunc=5.):
         """
         Keyword arguments:
         pparams -- configuration parameters for the PDF file (see class:ReadParams)
         """
 
+        self.Ndict = int(pparams['N_DICT']) # number of dictionary elements
+
         # initialize grid
-        self.delta=pparams['DELTA'] # grid spacing
-        self.min=pparams['MIN'] # grid lower bound
-        self.max=pparams['MAX'] # grid upper bound
-        self.grid=arange(self.min,self.max+self.delta/2,self.delta) # grid
-        self.Ngrid=len(self.grid) # number of elements
+        self.delta = pparams['DELTA'] # grid spacing
+        self.min = pparams['MIN'] # grid lower bound
+        self.max = pparams['MAX'] # grid upper bound
+        self.grid = arange(self.min, self.max+self.delta/2, self.delta) # grid
+        self.Ngrid = len(self.grid) # number of elements
         
         # create dictionary
-        self.sig_grid=linspace(pparams['SIG_MIN'],pparams['SIG_MAX'],int(pparams['N_DICT'])) # Gaussian dictionary parameter grid
-        self.dsig=self.sig_grid[1]-self.sig_grid[0] # kernel spacing
-        self.sig_width=ceil(self.sig_grid*sigma_trunc/self.delta).astype('int') # width of kernel
-        self.sig_dict=[gaussian(self.grid[self.Ngrid/2],square(self.sig_grid[i]),self.grid[self.Ngrid/2-self.sig_width[i]:self.Ngrid/2+self.sig_width[i]+1])
-                       for i in xrange(int(pparams['N_DICT']))] # dictionary
+        self.sig_grid = linspace(pparams['SIG_MIN'], pparams['SIG_MAX'], self.Ndict) # Gaussian dictionary parameter grid
+        self.dsig = self.sig_grid[1] - self.sig_grid[0] # kernel spacing
+        self.sig_width = ceil(self.sig_grid*sigma_trunc / self.delta).astype('int') # width of kernel
+        self.sig_dict = [gaussian(mu=self.grid[self.Ngrid/2], std=self.sig_grid[i],
+                                  x=self.grid[self.Ngrid/2-self.sig_width[i]:self.Ngrid/2+self.sig_width[i]+1])
+                         for i in xrange(self.Ndict)] # dictionary
 
 
     def fit(self, X, Xe):
@@ -1122,17 +1051,18 @@ class PDFDict():
         Map Gaussian PDFs onto the dictionary.
 
         Keyword arguments:
-        X -- target features
-        Xe -- target feature errors
+        X -- target features (mean)
+        Xe -- target feature errors (std dev)
 
         Outputs:
         X_idx -- corresponding dictionary grid indices
         Xe_idx -- corresponding dictionary kernel indices
         """
-        X_idx=((X-self.grid[0])/self.delta).round().astype('int')
-        Xe_idx=((Xe-self.sig_grid[0])/self.dsig).round().astype('int')
-        Xe_idx[Xe_idx>=len(self.sig_grid)]=len(self.sig_grid)-1 # impose error ceiling
-        Xe_idx[Xe_idx<0]=0. # impose error floor
+        
+        X_idx = ((X-self.grid[0]) / self.delta).round().astype('int')
+        Xe_idx = ((Xe - self.sig_grid[0]) / self.dsig).round().astype('int')
+        Xe_idx[Xe_idx >= len(self.sig_grid)] = len(self.sig_grid) - 1 # impose error ceiling
+        Xe_idx[Xe_idx < 0] = 0. # impose error floor
 
         return X_idx,Xe_idx
 
@@ -1148,163 +1078,161 @@ class PDFDict():
 
 ################ PLOTTING ################
 
+###### MANY OF THESE STILL ARE OLD
 
-def plot_nz(train_nz,out_nz,zgrid,deltaz,zrange=[0,6],out_nz_draws=None,sample_names=['True','Predicted'],colors=['black','red']):
+def plot_densities(train_pdf, out_pdf, x, out_pdf_draws=None, xbounds=[0,6], var_names=['Redshift','PDF'], sample_names=['True','Predicted'], colors=['black','red']):
     """
-    Plot comparison between two N(z) (or two general number density) distributions.
+    Plot comparison between two number densities.
 
     Keyword arguments:
-    sample_names -- names for each sample
-    train_nz -- original N(z)
-    out_nz -- comparison N(z)
-    zgrid -- grid N(z) is evaluated on
-    deltaz -- dz spacing
-    zrange -- plotting range
+    train_pdf -- original PDF
+    out_pdf -- comparison PDF
+    x -- input grid
+    out_pdf_draws -- samples from the PDF
+    xbounds -- plotting range (default=0-6)
+    var_names -- variable names (default='Redshift'/'PDF')
+    sample_names -- names of samples (default='True'/'Predicted')
+    colors -- colors for respective samples (default='black'/'red')
 
     Outputs:
     Identical to func::compute_density_score.
     """
 
     # compute errors from draws (if exists)
-    if out_nz_draws is not None:
-        # compute density scores
-        out_nz_err=std(out_nz_draws,axis=0) # naive sigma
-        [N_p,arr_p,z_sel,prob_p],N_ad,[N_e,arr_e,z_sel,prob_e]=compute_density_score(train_nz,out_nz,out_nz_err)
-        ad_s,ad_p=N_ad[0],N_ad[2] # Anderson-Darling statistic and probability
-        if ad_p>1: ad_p=0.
+    if out_pdf_draws is not None:
+        # compute density scores (Poisson, Anderson-Darling, and Error-weighted statistics)
+        out_pdf_err = std(out_pdf_draws, axis=0) # naive sigma
+        [N_p, arr_p, p_sel, prob_p], [ad_s, ad_cv, ad_p], [N_e, arr_e, e_sel, prob_e] = compute_density_score(train_pdf, out_pdf, out_pdf_err)
+        if ad_p>1: ad_p=0. # assign p-value of zero if something went wrong
 
     else:
-        # compute density scores
-        [N_p,arr_p,z_sel,prob_p],N_ad=compute_density_score(train_nz,out_nz)
-        ad_s,ad_p=N_ad[0],N_ad[2] # Anderson-Darling statistic and probability
-        if ad_p>1: ad_p=0.
+        # compute density scores (Poisson, Anderson-Darling, and Error-weighted statistics)
+        [N_p, arr_p, p_sel, prob_p], [ad_s, ad_cv, ad_p] = compute_density_score(train_pdf, out_pdf)
+        if ad_p>1: ad_p=0. # assign p-value of zero if something went wrong
     
     # initializing figure
-    gs=gridspec.GridSpec(2,1,height_ratios=[4,1])
+    gs=gridspec.GridSpec(2, 1, height_ratios=[4,1])
 
-    # plot N(z)
+    # plot number density
     subplot(gs[0])
-    plot(zgrid,train_nz/deltaz,color=colors[0],lw=3,label=sample_names[0])
-    if out_nz_draws is not None:
-        for draw in out_nz_draws:
-            plot(zgrid,draw/deltaz,color=colors[1],lw=0.2,alpha=0.3)
-    plot(zgrid,out_nz/deltaz,color=colors[1],lw=3,label=sample_names[1])
-    fill_between(zgrid,train_nz/deltaz,out_nz/deltaz,color='yellow')
-    yscale('log',noposy='clip')
-    xlim(zrange)
-    ylims=[1,max([max(train_nz/deltaz),max(out_nz/deltaz)])*1.5]
-    log_ylims=log10(ylims)
+    plot(x, train_pdf, color=colors[0], lw=3, label=sample_names[0])
+    if out_pdf_draws is not None:
+        for draw in out_pdf_draws:
+            plot(x, draw, color=colors[1], lw=0.2, alpha=0.3)
+    plot(x, out_pdf, color=colors[1], lw=3, label=sample_names[1])
+    fill_between(x, train_pdf, out_pdf, color='yellow')
+    xlim(xbounds)
+    ylims = [0, max([max(train_pdf),max(out_pdf)])*1.1]
     ylim(ylims)
     legend(fontsize=24)
-    xlabel('Redshift')
-    ylabel('$dN/dz$')
-    text(zrange[0]+(zrange[1]-zrange[0])*0.05,10**(log_ylims[0]+(log_ylims[1]-log_ylims[0])*0.18),'Pois$(S/n,p)$=('+str(round(N_p/sum(z_sel),2))+','+str(round(prob_p,2))+')')
-    text(zrange[0]+(zrange[1]-zrange[0])*0.05,10**(log_ylims[0]+(log_ylims[1]-log_ylims[0])*0.09),'AD$(S,p)$=('+str(round(ad_s,2))+','+str(round(ad_p,2))+')')
-    if out_nz_draws is not None:
-        text(zrange[0]+(zrange[1]-zrange[0])*0.05,10**(log_ylims[0]+(log_ylims[1]-log_ylims[0])*0.27),'Error$(S/n,p)$=('+str(round(N_e/sum(z_sel),2))+','+str(round(prob_e,2))+')')
+    xlabel(var_names[0])
+    ylabel(var_names[1])
+    text( xbounds[0] + (xbounds[1]-xbounds[0])*0.62, ylims[0] + (ylims[1]-ylims[0])*0.5, 'Pois$(S/n,p)$=('+str(round(N_p/sum(p_sel),2))+','+str(round(prob_p,2))+')' )
+    text( xbounds[0] + (xbounds[1]-xbounds[0])*0.62, ylims[0] + (ylims[1]-ylims[0])*0.35, 'AD$(S,p)$=('+str(round(ad_s,2))+','+str(round(ad_p,2))+')' )
+    if out_pdf_draws is not None:
+        text( xbounds[0] + (xbounds[1]-xbounds[0])*0.62, ylims[0] + (ylims[1]-ylims[0])*0.2, 'Err$(S/n,p)$=('+str(round(N_e/sum(e_sel),2))+','+str(round(prob_e,2))+')' )
     tight_layout()
 
     # plot running Poisson/error fluctuation
     
     subplot(gs[1])
-    xlim(zrange)
-    xlabel('Redshift')
+    xlim(xbounds)
+    xlabel(var_names[0])
     ylabel('$\Delta \sigma$')
-    plot(zgrid,zeros(len(zgrid)),'k--',lw=2)
-    fill_between(zgrid[z_sel],arr_p,color='yellow',alpha=0.7)
-    plot(zgrid[z_sel],arr_p,lw=2,color=colors[0])
-    ymin,ymax=round(min(arr_p),3),round(max(arr_p),3)
-    yticks([ymin,ymax],fontsize=24)
+    plot(x, zeros(len(x)), 'k--', lw=2)
+    fill_between(x[p_sel], arr_p, color='yellow', alpha=0.7)
+    plot(x[p_sel], arr_p, lw=2, color=colors[0])
+    ymin, ymax = round(min(arr_p),3), round(max(arr_p),3)
+    yticks([ymin,ymax], fontsize=24)
 
-    if out_nz_draws is not None:
-        fill_between(zgrid[z_sel],arr_e,color='orange',alpha=0.7)
-        plot(zgrid[z_sel],arr_e,lw=2,color=colors[1])
-        ymin,ymax=min(round(min(arr_e),3),ymin),max(round(max(arr_e),3),ymax)
-        yticks([ymin,ymax],fontsize=24)
+    if out_pdf_draws is not None:
+        fill_between(x[e_sel], arr_e, color='orange', alpha=0.7)
+        plot(x[e_sel], arr_e, lw=2, color=colors[1])
+        ymin, ymax = min(round(min(arr_e),3), ymin), max(round(max(arr_e),3), ymax)
+        yticks([ymin,ymax], fontsize=24)
 
     tight_layout()
 
-    if out_nz_draws is not None:
-        return [N_p,arr_p,z_sel,prob_p], N_ad, [N_e,arr_e,z_sel,prob_e]
+    if out_pdf_draws is not None:
+        return [N_p, arr_p, p_sel, prob_p], [ad_s, ad_cv, ad_p], [N_e, arr_e, z_sel, prob_e]
     else:
-        return [N_p,arr_p,z_sel,prob_p], N_ad
+        return [N_p, arr_p, p_sel, prob_p], [ad_s, ad_cv, ad_p]
 
 
-def plot_zpoints(plot_title, y, yp, markersize=1.5, limits=[0,6], binwidth=0.05, thresh=10, selection=None, weights=None):
+def plot_points(y, yp, markersize=1.5, limits=[0,6], binwidth=0.05, thresh=10, cat_thresh=0.15, selection=None, weights=None):
     """
     Plot results from redshift POINT ESTIMATES. To illustrate density scales, 2-D density histograms are used for the majority of the data, while outlying points are plotted individually.
 
     Keyword arguments:
-    plot_title -- plot title
     y -- input values
     yp -- predicted values
     markersize -- size of outlying points
     limits -- scale of x,y axes
     binwidth -- width of 2-D histogram bins
     thresh -- threshold before switching from histogram to outlying points
+    cat_thresh -- threshold used to categorize catastrophic failures
     selection -- selection array for plotting a subset of objects
 
     Outputs:
     Identical to func::compute_score.
     """
 
-    cmap=get_cmap('jet')
+    cmap = get_cmap('rainbow')
     cmap.set_bad('white')
 
-    success_sel=isfinite(yp)&(yp>0)
+    success_sel = isfinite(yp) & (yp>0)
 
     if weights is not None:
-        weights=weights
+        weights = weights
     else:
-        weights=ones(len(y))
+        weights = ones(len(y))
     
     if selection is not None:
-        sel=success_sel&selection&(weights>0.)
+        sel = success_sel & selection & (weights>0.)
     else:
-        sel=success_sel&(weights>0.)
+        sel = success_sel & (weights>0.)
 
-    score=compute_score(y[sel],yp[sel],weights=weights[sel])
+    score = compute_score(y[sel], yp[sel], weights=weights[sel])
 
     # declare binning parameters
-    xyrange=[[0,10],[0,10]]
-    bins=[arange(xyrange[0][0],xyrange[0][1]+binwidth,binwidth),arange(xyrange[1][0],xyrange[1][1]+binwidth,binwidth)]
+    xyrange=[[0,10], [0,10]]
+    bins=[arange(xyrange[0][0], xyrange[0][1]+binwidth, binwidth), arange(xyrange[1][0], xyrange[1][1]+binwidth, binwidth)]
     
     # bin data
-    xdat,ydat=y[sel],yp[sel]
-    hh,locx,locy=histogram2d(xdat,ydat,range=xyrange,bins=bins,weights=weights[sel])
-    posx=digitize(xdat,locx)
-    posy=digitize(ydat,locy)
+    xdat, ydat = y[sel], yp[sel]
+    hh, locx, locy = histogram2d(xdat, ydat, range=xyrange, bins=bins, weights=weights[sel])
+    posx = digitize(xdat, locx)
+    posy = digitize(ydat, locy)
 
-    #select points within the histogram
-    hhsub=hh[posx-1,posy-1] # values of the histogram where the points are
-    xdat1=xdat[(hhsub<thresh)] # low density points (x)
-    ydat1=ydat[(hhsub<thresh)] # low density points (y)
-    hh[hh<thresh]=NaN # fill the areas with low density by NaNs
+    # select points within the histogram
+    hhsub = hh[posx-1, posy-1] # values of the histogram where the points are
+    xdat1 = xdat[(hhsub<thresh)] # low density points (x)
+    ydat1 = ydat[(hhsub<thresh)] # low density points (y)
+    hh[hh<thresh] = NaN # fill the areas with low density by NaNs
 
     # plot results
-    plot(xdat1, ydat1,'.',color='black',markersize=markersize) # outliers/low-density regions
-    imshow(flipud(hh.T),cmap='jet',extent=array(xyrange).flatten(),interpolation='none',norm=matplotlib.colors.LogNorm()) # high-density regions
+    plot(xdat1, ydat1, '.', color='black', markersize=markersize) # outliers/low-density regions
+    imshow(flipud(hh.T), cmap = cmap, extent=array(xyrange).flatten(), interpolation='none', norm=matplotlib.colors.LogNorm()) # high-density regions
 
     # establishing the colorbar
-    cbar=colorbar()
-    cticks=arange(ceil(log10(nanmin(hh.flatten()))/0.25)*0.25,int(log10(nanmax(hh.flatten()))/0.25)*0.25+1e-6,0.25)
-    cticklabels=['$10^{'+str(round(i,2))+'}$' for i in cticks]
+    cbar = colorbar()
+    cticks = arange( ceil(log10(nanmin(hh.flatten())) / 0.25) * 0.25, int(log10(nanmax(hh.flatten())) / 0.25) * 0.25 + 1e-6, 0.25)
+    cticklabels = ['$10^{'+str(round(i,2))+'}$' for i in cticks]
     cbar.set_ticks(10**cticks)
     cbar.set_ticklabels(cticklabels)
 
     # plotting 1:1 line+bounds
-    plot(array([0,100]),array([0,100]),'k--',lw=3)
-    plot(array([0,100]),array([0,100])*1.15+0.15,'k-.',lw=2)
-    plot(array([0,100]),array([0,100])*0.85-0.15,'k-.',lw=2)
-    title(plot_title,y=1.02)
+    plot(array([0,100]), array([0,100]), 'k--', lw=3)
+    plot(array([0,100]), array([0,100]) * (1+cat_thresh) + cat_thresh, 'k-.', lw=2)
+    plot(array([0,100]), array([0,100]) * (1-cat_thresh) - cat_thresh, 'k-.', lw=2)
 
     # statistics
-    Nobj=sum(weights[sel])
-    text(1.2*(limits[1]/5.0),4.7*(limits[1]/5.0),"$N$: "+str(int(Nobj))+" ("+str(round(Nobj*1.0/sum(weights[success_sel]),3))+")",fontsize=18,color='black')
-    text(1.2*(limits[1]/5.0),4.5*(limits[1]/5.0),"$\Delta z^\prime$ (mean): "+str(round(score[0][2],4)*100)+"%",fontsize=18,color='black')
-    text(1.2*(limits[1]/5.0),4.3*(limits[1]/5.0),"$\Delta z^\prime$ (med): "+str(round(score[1][2],4)*100)+"%",fontsize=18,color='black')
-    text(1.2*(limits[1]/5.0),4.1*(limits[1]/5.0),"$\sigma_{\Delta z^\prime}$ (MAD): "+str(round(score[1][3],4)*100)+"%",fontsize=18,color='black')
-    text(1.2*(limits[1]/5.0),3.9*(limits[1]/5.0),"$f_{cat}$: "+str(round(score[2],4)*100)+"%",fontsize=18,color='black')
+    Nobj = sum(weights[sel])
+    text(1.2*(limits[1]/5.0), 4.7*(limits[1]/5.0), "$N$: "+str(int(Nobj))+" ("+str(round(Nobj*1.0/sum(weights[success_sel]),3))+")", fontsize=18, color='black')
+    text(1.2*(limits[1]/5.0), 4.5*(limits[1]/5.0), "$\Delta z^\prime$ (mean): "+str(round(score[0][2],4)*100)+"%", fontsize=18, color='black')
+    text(1.2*(limits[1]/5.0), 4.3*(limits[1]/5.0), "$\Delta z^\prime$ (med): "+str(round(score[1][2],4)*100)+"%", fontsize=18, color='black')
+    text(1.2*(limits[1]/5.0), 4.1*(limits[1]/5.0), "$\sigma_{\Delta z^\prime}$ (MAD): "+str(round(score[1][3],4)*100)+"%", fontsize=18, color='black')
+    text(1.2*(limits[1]/5.0), 3.9*(limits[1]/5.0), "$f_{cat}$: "+str(round(score[2],4)*100)+"%", fontsize=18, color='black')
 
     # miscallaneous
     xlabel('Input')
@@ -1365,7 +1293,7 @@ def plot_zpdfstack(zpdf, zgrid, lz_idx, lze_idx, rdict, sel=None, weights=None, 
         i[i==zgrid[0]]=NaN
 
     # converting from log to linear space
-    temp_stack=temp_stack[rdict.zmin_idx_highres:rdict.zmax_idx_highres:int(rdict.res)]/rdict.znorm[:,None] # reducing resolution
+    temp_stack=temp_stack[rdict.zmin_idx_highres:rdict.zmax_idx_highres:int(rdict.res)]/(1+rdict.zgrid)[:,None] # reducing resolution
     prob=interp(zgrid,rdict.zgrid,temp_stack.sum(axis=1)) # running pdf
     temp_stack=swapaxes(pdfs_resample(rdict.zgrid,swapaxes(temp_stack,0,1),zgrid),0,1) # resampling to linear redshift grid
     temp_stack*=prob[None,:] # re-normalizing
