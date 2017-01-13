@@ -31,6 +31,7 @@ from sklearn.externals import joblib # I/O on ML models
 from scipy import interpolate # interpolation
 
 # machine learning
+from sklearn import tree # decision trees
 from sklearn import neighbors # nearest neighbors
 from sklearn import base # additional methods
 
@@ -155,14 +156,14 @@ def loglikelihood_s(data, data_err, data_mask, models, models_err, models_mask, 
 ########## MAGNITUDE MAPS ##########
 
 
-def asinh_mag_map(phot, err, skynoise=None, zeropoints=1.):
+def asinh_mag_map(phot, err, skynoise=1., zeropoints=1.):
     """
     Map flux density to asinh magnitude (i.e. "Luptitude"; Lupton et al. 1999).
 
     Keyword arguments:
     phot -- flux densities
     err -- associated errors
-    skynoise -- background sky noise (i.e. softening parameter) (default=median(err))
+    skynoise -- background sky noise/softening parameter (default=1.)
     zeropoints -- flux zero-points (default=1.)
     
     Outputs:
@@ -171,9 +172,6 @@ def asinh_mag_map(phot, err, skynoise=None, zeropoints=1.):
     [skynoise] -- softening parameter (if not originally provided)
     """
 
-    if skynoise is None:
-        skynoise = median(err, axis=0) # assign softening as median error
-
     # compute Luptitudes 
     mag_asinh = -2.5/log(10) * ( arcsinh(phot/(2*skynoise)) + log(skynoise/zeropoints) ) # mag
     mag_asinh_err = sqrt( square(2.5*log10(e)*err) / (square(2*skynoise) + square(phot)) ) # err
@@ -181,14 +179,14 @@ def asinh_mag_map(phot, err, skynoise=None, zeropoints=1.):
     return mag_asinh, mag_asinh_err
 
 
-def inv_asinh_mag_map(mag, magerr, skynoise, zeropoints=1.):
+def inv_asinh_mag_map(mag, magerr, skynoise=1., zeropoints=1.):
     """
     Map asinh magnitude to flux density.
 
     Keyword arguments:
     mag -- asinh magnitudes
     magerr -- associated errors
-    skynoise -- background sky noise (i.e. softening parameter)
+    skynoise -- background sky noise/softening parameter (default=1.)
     zeropoints -- flux zero-points (default=1.)
 
     Outputs: 
@@ -515,7 +513,6 @@ def pdf_kde_dict(ydict, ywidth, y_pos, y_idx, y_wt, x, dx, Ny, Nx, wt_thresh=1e-
 
 ########## WINBET ##########
 
-### THIS HAS TO BE ENTIRELY RE-WRITTEN
 class WINBET():
     """
     The Weighted Inference with Naive Bayes and Extra Trees (WINBET) class. 
@@ -528,157 +525,112 @@ class WINBET():
     
     def __init__(self, Ntrees=100, Nleaf=10):
         """
-        Initializes the instance. 
+        Initializes the instance.
 
         Keyword arguments:
         N_members -- number of members in ensemble
-        See sklearn.neighbors.NearestNeighbors for a description of additional keyword arguments and their defaults.
+        N_leaf -- minimum number of samples in a leaf
         """
 
         # establish baseline model
-        self.NTREES=Ntrees # number of trees
-        self.NLEAF=Nleaf # minimum number of objects per leaf
-        self.lf=tree.ExtraTreeRegressor(min_samples_leaf=self.NLEAF)
+        self.NTREES = Ntrees # number of trees
+        self.NLEAF = Nleaf # minimum number of objects per leaf
+        self.lf = [tree.ExtraTreeRegressor(min_samples_leaf=self.NLEAF) for i in xrange(self.NTREES)]
+        self.lf_idx = [[] for i in xrange(self.NTREES)]
 
-    def train(self, phot, var, masks, X, Xe, Xdict):
+    def train(self, x, xe, xm, feature_map=asinh_mag_map):
         """
-        Train underlying trees using Naive Bayes and Extra Trees.
+        Train underlying Extra Trees using Naive Bayes for guesses.
 
         Keyword arguments:
-        phot -- measured fluxes
-        var -- measured flux variances
-        masks -- flux masks
-        X -- transformed features
-        Xe -- transformed feature errors
-        Xdict -- feature dictionary
+        x -- features
+        xe -- feature errors
+        xm -- feature mask
+        feature_map -- feature transformation map (default=asinh_mag_map)
         """
 
         # initialize stuff
-        self.NOBJ,self.NFILT=len(phot),len(phot[0]) # number of objects/filters
-        self.censor_sel=arange(self.NOBJ)[(masks.sum(axis=1)<self.NFILT)] # indices of objects with censored (missing) data
-        self.NCENSOR=len(self.censor_sel) # number of censored objects
-        self.csel=[(masks[:,i]==False) for i in xrange(self.NFILT)] # mask slice in relevant dimension
-        self.NFILL=[self.csel[i].sum() for i in xrange(self.NFILT)] # number of censored mags to be filled in
+        self.NOBJ, self.NDIM = x.shape # number of objects and feature dimensions
+        censor_sel = arange(self.NOBJ)[xm.sum(axis=1) < self.NDIM] # indices of objects with censored (missing) data
+        NCENSOR = len(censor_sel) # number of censored objects
+        csel = [(xm[:,i]==False) for i in xrange(self.NDIM)] # mask slice in relevant dimension
+        NFILL = [csel[i].sum() for i in xrange(self.NDIM)] # number of censored values to be filled in
 
-        self.phot=copy(phot)
-        self.var=copy(var)
-        self.masks=copy(masks)
-
-        # fill in missing features with arbitrary values
-        Xt=copy(X)
-        Xet=copy(Xe)
-        Xt[masks==False]=1.
-        Xet[masks==False]=1.
+        self.x, self.xe, self.xm = x.copy(), xe.copy(), xm.copy() # copy data
+        self.feature_map = feature_map
     
-        # discretize features along dictionary
-        Xidx,Xeidx=Xdict.fit(Xt,Xet)
-
-    
-        # construct Naive Bayes priors
-        X_pdf=array([pdf_kde_dict(Xdict.sig_dict,Xdict.sig_width,Xidx[:,i],Xeidx[:,i],masks[:,i].astype(int),Xdict.grid,Xdict.delta,Xdict.Ngrid) for i in xrange(self.NFILT)]) # feature PDF
-        X_cdf=X_pdf.cumsum(axis=1)/X_pdf.sum(axis=1)[:,None] # compute CDF
-        self.Xcdf=[unique(X_cdf[i]) for i in xrange(self.NFILT)] # select unique elements
-        self.Xcdf_grid=[Xdict.grid[unique(X_cdf[i],return_index=True)[1]] for i in xrange(self.NFILT)] # select corresponding unique grid elements
-
-    
-        # initialize Extra Tree Regressor
-        self.test_indices=[[] for i in xrange(self.NCENSOR)] # collection of neighbors for each object
-
         # gather neighbors
         for counter in xrange(self.NTREES):
             sys.stdout.write(str(counter)+' ')
             sys.stdout.flush()
 
-            # generate new fluxes (training)
-            X_filled=normal(Xt,Xet) # perturb features
-            for i in xrange(self.NFILT):
-                Xfill=interp(random.uniform(size=self.NFILL[i]),self.Xcdf[i],self.Xcdf_grid[i]) # draw from CDF
-                X_filled[self.csel[i],i]=Xfill # impute censored fluxes
+            # generate new values
+            x_t = normal(x, xe) # jitter values
+            X_t, Xe_t = self.feature_map(x_t, xe) # transform features
+            for i in xrange(self.NDIM):
+                cdf_x, cdf_y = linspace(0, 1, self.NOBJ-NFILL[i]), sort(X_t[:,i][csel[i]==False]) # compute marginal CDF
+                X_t[csel[i],i] = interp(rand(NFILL[i]), cdf_x, cdf_y) # fill in values by sampling from CDF
 
             # train tree
-            self.lf.fit(X_filled,X_filled) # fit data
-            idx=self.lf.apply(X_filled) # map training data leaf indices
-            tree_idx=[[] for i in xrange(max(idx)+1)] # tree-structured object list
+            self.lf[counter].fit(X_t, X_t) # fit data
+
+            # map indices
+            idx = self.lf[counter].apply(X_t) # map leaf indices
+            self.lf_idx[counter] = [[] for i in xrange(max(idx)+1)] # tree-structured object list
             for i in xrange(len(idx)):
-                tree_idx[idx[i]].append(i) # add object to tree-indexed list
-
-            # generate new fluxes (testing)
-            X_filled=normal(Xt,Xet) # perturb features
-            for i in xrange(self.NFILT):
-                Xfill=interp(random.uniform(size=self.NFILL[i]),self.Xcdf[i],self.Xcdf_grid[i]) # draw from CDF
-                X_filled[self.csel[i],i]=Xfill # impute censored fluxes
-
-            # query objects with censored fluxes
-            tidx=self.lf.apply(X_filled[self.censor_sel]) 
-            for i in xrange(self.NCENSOR):
-                self.test_indices[i].append(tree_idx[tidx[i]]) # add leaf neighbors to object-indexed list  
+                self.lf_idx[counter][idx[i]].append(i) # add object to tree-indexed list
 
 
-    def impute(self, phot, var, masks, impute_type='random', ll_func=loglikelihood):
+    def impute(self, y, ye, ym):
         """
         Impute missing photometry.
 
         Keyword arguments:
-        phot -- measured fluxes (same as train)
-        var -- measured flux variances (same as train)
-        masks -- flux masks (same as train)
-        impute_type -- 'mean' or 'random'
-        ll_func -- loglikelihood function (default: loglikelihood)
+        y -- new input values
+        ye -- new input errors
+        ym -- new input masks
 
         Outputs:
-        phot_impute -- filled photometric data
-        var_impute -- filled variance data
+        y_impute -- imputed value
+        ye_impute -- imputed error
+        [rand_idx] -- selected training object indices
         """
 
-        pcensor=empty((self.NOBJ,self.NFILT))
-        vcensor=empty((self.NOBJ,self.NFILT))
+        # initialize stuff
+        Ny = len(y) # number of objects 
+        sel = arange(Ny)[ym.sum(axis=1) < self.NDIM] # indices of objects with censored (missing) data
+        Nsel = len(sel) # number of censored objects
+        y_csel = [(ym[:,i]==False) for i in xrange(self.NDIM)] # mask slice in relevant dimension
+        Nfill = [y_csel[i].sum() for i in xrange(self.NDIM)] # number of censored values to be filled in
 
-        # compute likelihood-weighted estimates for fluxes, errors
-        for obj in xrange(self.NCENSOR):
-            if obj%500==0: 
-                sys.stdout.write(str(obj)+' ')
-                sys.stdout.flush()
+        model_idx = [[] for i in xrange(Nsel)] # model indices
 
-            idx=self.censor_sel[obj] # object index
+        # gather neighbors
+        for counter in xrange(self.NTREES):
 
-            tidx=pandas.unique([i for j in self.test_indices[obj] for i in j]) # derive unique list of neighbors
-            ptemp=phot[tidx] # phot subset
-            vtemp=var[tidx] # var subset
-            mtemp=masks[tidx] # mask subset
+            Y_t, Ye_t = self.feature_map(y, ye) # transform features
+            for i in xrange(self.NDIM):
+                cdf_x, cdf_y = linspace(0, 1, Ny-Nfill[i]), sort(Y_t[:,i][y_csel[i]==False]) # compute marginal CDF
+                Y_t[y_csel[i],i] = interp(rand(Nfill[i]), cdf_x, cdf_y) # fill in values by sampling from CDF
 
-            # derive likelihoods
-            ll,nbands=ll_func(phot[idx],var[idx],masks[idx],ptemp,vtemp,mtemp)
-
-            # derive dimension-specific collections of weights and photometry
-            mtemp=[mtemp[:,i]&(nbands>0) for i in xrange(self.NFILT)] # band-specific masks
-            ptemp=[ptemp[:,i][mtemp[i]] for i in xrange(self.NFILT)] # band-specific phot
-            vtemp=[vtemp[:,i][mtemp[i]] for i in xrange(self.NFILT)] # band-specific var
-            lltemp=[ll[mtemp[i]] for i in xrange(self.NFILT)] # band-specific log-likelihoods
-            wtemp=[exp(-0.5*(lltemp[i]-lltemp[i].min())) for i in xrange(self.NFILT)] # band-specific weights
-
-            if impute_type=='mean':
-                # compute expected photometry
-                p1=array([average(ptemp[i],weights=wtemp[i]) for i in xrange(self.NFILT)]) # mean phot (first moment): E(X)
-                p2=array([average(square(ptemp[i]),weights=wtemp[i]) for i in xrange(self.NFILT)]) # second moment: E(X^2)
-                v1_i=p2-square(p1) # variance imputed phot: V(X)=E(X^2)-E^2(X)
-                v1_m=array([average(vtemp[i],weights=wtemp[i]) for i in xrange(self.NFILT)]) # mean measured variance: E(Xe^2)
-                v_eff=v1_i+v1_m # effective error: observed variance and mean variance in quadrature sqrt([E(Xe^2)+V(X)])
-                pcensor[idx]=p1 # fill in photometry
-                vcensor[idx]=v_eff # fill in photometry
-
-            if impute_type=='random':
-                # generate random sample
-                choice_idx=[choice(tidx[mtemp[i]],p=wtemp[i]/wtemp[i].sum()) for i in xrange(self.NFILT)]
-                pcensor[idx]=phot[choice_idx,xrange(self.NFILT)]
-                vcensor[idx]=var[choice_idx,xrange(self.NFILT)]
-
-        # fill in photometry
-        phot_impute=copy(phot)
-        var_impute=copy(var)
-        phot_impute[masks==False]=pcensor[masks==False]
-        var_impute[masks==False]=vcensor[masks==False]
+            # query tree
+            tidx = self.lf[counter].apply(Y_t[sel]) 
+            for i in xrange(Nsel):
+                for j in self.lf_idx[counter][tidx[i]]:
+                    model_idx[i].append(j) # add leaf neighbors to object-indexed list
     
-        return phot_impute,var_impute
+        # select random object
+        rand_idx = empty(Nsel, dtype='int')
+        for i in xrange(Nsel):
+            rand_idx[i] = choice(model_idx[i])
+        
+        # jitter values
+        y_impute, ye_impute = y.copy(), ye.copy()
+        y_impute[ym==False] = self.x[rand_idx][ym[sel]==False]
+        ye_impute[ym==False] = self.xe[rand_idx][ym[sel]==False]
+
+        return y_impute, ye_impute
+
 
 
 ########### FRANKEN-Z ###############
@@ -691,6 +643,7 @@ class FRANKENZ():
     Functions: 
     predict -- generates redshift PDF predictions
     """
+
     
     def __init__(self, N_members=100, n_neighbors=10, radius=1.0, algorithm='kd_tree', leaf_size=50,
                  p=2, metric='minkowski', metric_params=None, n_jobs=1):
@@ -750,14 +703,14 @@ class FRANKENZ():
 
             # impute missing training values
             if impute_train is not None:
-                x_train_t, xe_train_t = impute_train.impute(x_train, xe_train, xm_train, impute_type='random') # impute values
+                x_train_t, xe_train_t = impute_train.impute(x_train, xe_train, xm_train) # impute values
                 x_train_t = normal(x_train_t, xe_train_t) # jitter
             else:
                 x_train_t, xe_train_t = normal(x_train, xe_train).astype('float32'), xe_train # jitter
 
             # impute missing target values
             if impute_targ is not None:
-                x_targ_t, xe_targ_t = impute_targ.impute(x_targ, xe_targ, xm_targ, impute_type='random')
+                x_targ_t, xe_targ_t = impute_targ.impute(x_targ, xe_targ, xm_targ)
                 x_targ_t = normal(x_targ_t, xe_targ_t)
             else:
                 x_targ_t, xe_targ_t = normal(x_targ, xe_targ).astype('float32'), xe_targ # perturb fluxes
@@ -814,6 +767,7 @@ class ReadParams():
     Read in configuration files and initialize parameters. [Code based on Gabriel Brammer's threedhst.eazyPy module.]
     """
 
+    
     def __init__(self, config_file):
         """
         Process configuration file.
@@ -880,6 +834,7 @@ class ReadFilters():
     Read in filter files.
     """
 
+    
     def __init__(self, filter_list, path='', Npoints=5e4):
         """
         Keyword arguments:
@@ -1070,15 +1025,14 @@ class PDFDict():
 
 
 
+################################################################################
 
 
 
 
 
+########## PLOTTING UTILITIES ##########
 
-################ PLOTTING ################
-
-###### MANY OF THESE STILL ARE OLD
 
 def plot_densities(train_pdf, out_pdf, x, out_pdf_draws=None, xbounds=[0,6], var_names=['Redshift','PDF'], sample_names=['True','Predicted'], colors=['black','red']):
     """
@@ -1159,7 +1113,7 @@ def plot_densities(train_pdf, out_pdf, x, out_pdf_draws=None, xbounds=[0,6], var
         return [N_p, arr_p, p_sel, prob_p], [ad_s, ad_cv, ad_p]
 
 
-def plot_points(y, yp, markersize=1.5, limits=[0,6], binwidth=0.05, thresh=10, cat_thresh=0.15, selection=None, weights=None):
+def plot_zpoints(y, yp, markersize=1.5, limits=[0,6], binwidth=0.05, thresh=10, cat_thresh=0.15, selection=None, weights=None):
     """
     Plot results from redshift POINT ESTIMATES. To illustrate density scales, 2-D density histograms are used for the majority of the data, while outlying points are plotted individually.
 
