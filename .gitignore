@@ -43,6 +43,7 @@ nosetests.xml
 *.ipynb_checkpoints
 
 # paper
+paper
 paper/*.aux
 paper/*.bbl
 paper/*.blg
