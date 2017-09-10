@@ -1,5 +1,5 @@
-u u_SDSS.res
-g g_SDSS.res
-r r_SDSS.res
-i i_SDSS.res
-z z_SDSS.res
+1 u sdss/u_SDSS.res
+2 g sdss/g_SDSS.res
+3 r sdss/r_SDSS.res
+4 i sdss/i_SDSS.res
+5 z sdss/z_SDSS.res

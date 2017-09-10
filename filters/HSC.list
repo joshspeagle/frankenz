@@ -1,5 +1,5 @@
-g hsc_g.dat
-r hsc_r.dat
-i hsc_i.dat
-z hsc_z.dat
-y hsc_y.dat
+1 g hsc/hsc_g.dat
+2 r hsc/hsc_r.dat
+3 i hsc/hsc_i.dat
+4 z hsc/hsc_z.dat
+5 y hsc/hsc_y.dat

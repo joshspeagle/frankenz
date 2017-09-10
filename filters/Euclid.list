@@ -1,10 +1,10 @@
-U u_DEcam.res
-G g_DEcam.res
-R r_DEcam.res
-I i_DEcam.res
-Z z_DEcam.res
-Y y_DEcam.res
-VIS VIS.res
-Yw Y.res
-Jw J.res
-Hw H.res
+1 U DECam/u_DEcam.res
+2 G DECam/g_DEcam.res
+3 R DECam/r_DEcam.res
+4 I DECam/i_DEcam.res
+5 Z DECam/z_DEcam.res
+6 Y DECam/y_DEcam.res
+7 VIS euclid/euclid_vis.dat
+8 Yw euclid/euclid_y.dat
+9 Jw euclid/euclid_j.dat
+10 Hw euclid/euclid_h.dat

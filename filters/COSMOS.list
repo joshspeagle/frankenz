@@ -1,31 +1,31 @@
-u_cfht u_megaprime_sagem.res
-B+ B_subaru.res
-V+ V_subaru.res
-r+ r_subaru.res
-i+ i_subaru.res
-z++ suprime_FDCCD_z.res
-IB427 IB427.SuprimeCam.pb
-IB464 IB464.SuprimeCam.pb
-IB484 IB484.SuprimeCam.pb
-IB505 IB505.SuprimeCam.pb
-IB527 IB527.SuprimeCam.pb
-IB574 IB574.SuprimeCam.pb
-IB624 IB624.SuprimeCam.pb
-IB679 IB679.SuprimeCam.pb
-IB709 IB709.SuprimeCam.pb
-IB738 IB738.SuprimeCam.pb
-IB767 IB767.SuprimeCam.pb
-IB827 IB827.SuprimeCam.pb
-NB711 NB711.SuprimeCam.pb
-NB816 NB816.SuprimeCam.pb
-hsc_y hsc_y.dat
-Y_ultravista Y_uv.res
-J_ultravista J_uv.res
-H_ultravista H_uv.res
-K_ultravista K_uv.res
-H_wircam wircam_H.res
-Ks_wircam wircam_Ks.res
-IRAC1 irac_ch1.res
-IRAC2 irac_ch2.res
-IRAC3 irac_ch3.res
-IRAC4 irac_ch4.res
+1 galex_nuv galex/galex2500.res
+2 u* cfht/u_megaprime_sagem.res
+3 B subaru/B_subaru.res
+4 V subaru/V_subaru.res
+5 i+ subaru/i_subaru.res
+6 z++ subaru/z_subaru_new.res
+7 IA427 subaru/IB427.SuprimeCam.pb
+8 IA464 subaru/IB464.SuprimeCam.pb
+9 IA484 subaru/IB484.SuprimeCam.pb
+10 IA505 subaru/IB505.SuprimeCam.pb
+11 IA527 subaru/IB527.SuprimeCam.pb
+12 IA574 subaru/IB574.SuprimeCam.pb
+13 IA624 subaru/IB624.SuprimeCam.pb
+14 IA679 subaru/IB679.SuprimeCam.pb
+15 IA709 subaru/IB709.SuprimeCam.pb
+16 IA738 subaru/IB738.SuprimeCam.pb
+17 IA767 subaru/IB767.SuprimeCam.pb
+18 IA827 subaru/IB827.SuprimeCam.pb
+19 NB711 subaru/NB711.SuprimeCam.pb
+20 NB816 subaru/NB816.SuprimeCam.pb
+21 Y hsc/hsc_y.dat
+22 Y_uv ultravista/Y_uv.res
+23 J_uv ultravista/J_uv.res
+24 H_uv ultravista/H_uv.res
+25 Ks_uv ultravista/K_uv.res
+26 Ks_cfht cfht/wircam_Ks.res
+27 H_cfht cfht/wircam_H.res
+28 irac_ch1 spitzer/irac_ch1.res
+29 irac_ch2 spitzer/irac_ch2.res
+30 irac_ch3 spitzer/irac_ch3.res
+31 irac_ch4 spitzer/irac_ch4.res
