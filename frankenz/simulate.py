@@ -16,7 +16,7 @@ import warnings
 import math
 import numpy as np
 import warnings
-from . import priors 
+from . import priors
 from . import reddening
 
 __all__ = ["mag_err", "draw_mag", "draw_type_given_mag",
@@ -27,19 +27,19 @@ _FILTERS = {'cosmos': 'COSMOS.list',
             'euclid': 'Euclid.list',
             'hsc': 'HSC.list',
             'lsst': 'LSST.list',
-            'sdss': 'SDSS.list',}
+            'sdss': 'SDSS.list'}
 
 # Reference magnitudes for pre-set surveys.
 _REFMAGS = {'cosmos': 'i+',
             'euclid': 'VIS',
             'hsc': 'i',
             'lsst': 'r',
-            'sdss': 'r',}
+            'sdss': 'r'}
 
 # Pre-set collection of templates.
 _TEMPLATES = {'brown': 'BROWN.list',
               'cww+': 'CWWSB4.list',
-              'polletta+': 'POLLETTASB.list',}
+              'polletta+': 'POLLETTASB.list'}
 
 # Pre-set P(z,t,m) priors.
 _PRIORS = {'bpz': (priors.pmag, priors.bpz_pt_m, priors.bpz_pz_tm)}
@@ -54,7 +54,7 @@ c = 299792458.0  # speed of light in m/s
 def mag_err(mag, maglim, sigdet=5., params=(4.56, 1., 1.)):
     """
     Compute the magnitude error as a function of a given detection limit
-    following Rykoff et al. (2015). 
+    following Rykoff et al. (2015).
 
     Parameters
     ----------
@@ -135,13 +135,13 @@ def draw_mag(Nobj, pmag, pmag_kwargs=None, mbounds=(10, 28), Npoints=1000):
     cdf_m = pdf_m.cumsum()  # compute unnormalized CDF F(x)
     cdf_m = np.append(0, cdf_m) / cdf_m[-1]  # normalize and left-pad F(x)
     lpad = 1e-5 * (mbounds[1] - mbounds[0])  # compute left padding for x
-    mgrid = np.append(mgrid[0] - lpad, mgrid) # left pad x to match F(x)
+    mgrid = np.append(mgrid[0] - lpad, mgrid)  # left pad x to match F(x)
 
     # Sample from the inverse CDF F^-1(x).
     mags = np.interp(np.random.rand(Nobj), cdf_m, mgrid)
 
     return mags
-    
+
 
 def draw_type_given_mag(p_type_given_mag, mags, Ntypes, ptm_kwargs=None):
     """
@@ -183,7 +183,7 @@ def draw_type_given_mag(p_type_given_mag, mags, Ntypes, ptm_kwargs=None):
     return types
 
 
-def draw_redshift_given_type_mag(p_z_tm, types, mags, pztm_kwargs=None, 
+def draw_redshift_given_type_mag(p_z_tm, types, mags, pztm_kwargs=None,
                                  zbounds=(0, 15), Npoints=1000):
     """
     Draw corresponding redshifts from P(z | type, mag) using the
@@ -308,7 +308,7 @@ def draw_ztm(pmag, p_tm, p_ztm, Nobj, pm_kwargs=None, ptm_kwargs=None,
 
     """
 
-    mags = draw_mag(Nobj, pmag, pmag_kwargs=pm_kwargs, mbounds=mbounds, 
+    mags = draw_mag(Nobj, pmag, pmag_kwargs=pm_kwargs, mbounds=mbounds,
                     Npoints=Npoints)
     types = draw_type_given_mag(p_tm, mags, ptm_kwargs=None)
     redshifts = draw_redshift_given_type_mag(p_ztm, types, mags,
@@ -326,23 +326,23 @@ class MockSurvey(object):
     ----------
     survey : str, optional
         If provided, will initialize the `MockSurvey` using one of several
-        built-in presets: 
+        built-in presets:
 
-        * COSMOS (`'cosmos'`), 
-        * *Euclid* (`'euclid'`), 
-        * HSC SSP (`'hsc'`), 
+        * COSMOS (`'cosmos'`),
+        * *Euclid* (`'euclid'`),
+        * HSC SSP (`'hsc'`),
         * LSST (`'lsst'`), and
         * SDSS (`'sdss'`).
 
     templates : str, optional
         If provided, will initialize the `MockSurvey` using one of several
-        built-in template libraries: 
+        built-in template libraries:
 
         * 129 galaxies from Brown et al. (2014) (`'brown'`),
         * 8 templates generated using a combination of galaxies
           from Coleman, Wu & Weeman (1980) and synthetic spectra from Bruzual
           & Charlot (2003) spectral models (`'cww+'`), and
-        * 31 templates generated using a combination of galaxies from 
+        * 31 templates generated using a combination of galaxies from
           Polletta et al. (2006) and synthetic spectra from Bruzual & Charlot
           (2003) (`'polletta+'`).
 
@@ -362,7 +362,7 @@ class MockSurvey(object):
 
     def __init__(self, survey=None, templates=None, prior=None):
 
-        # filters        
+        # filters
         self.filters = None
         self.NFILTER = None
         self.ref_filter = None
@@ -412,7 +412,7 @@ class MockSurvey(object):
         ----------
         filter_list : str
             A list of filters to import. This can be a string from a
-            collection of built-in surveys or a corresponding file in the 
+            collection of built-in surveys or a corresponding file in the
             proper format (see `frankenz/filters/README.txt`).
 
         path : str, optional
@@ -422,7 +422,7 @@ class MockSurvey(object):
 
         Npoints : int, optional
             The number of points used to interpolate the filter transmission
-            curves when computing the effective wavelength. Default is `5e4`. 
+            curves when computing the effective wavelength. Default is `5e4`.
 
         """
 
@@ -440,7 +440,7 @@ class MockSurvey(object):
         for line in f:
             index, name, fpath, fdepth_mag = line.split()
             fdepth_mag = float(fdepth_mag)
-            fdepth_flux = 10**((fdepth_mag - 23.9) / -2.5) / 5. # noise [uJy]
+            fdepth_flux = 10**((fdepth_mag - 23.9) / -2.5) / 5.  # noise [uJy]
             fltr = {'index': int(index), 'name': name,
                     'depth_mag5sig': fdepth_mag, 'depth_flux1sig': fdepth_flux}
             self.filters.append(fltr)
@@ -465,8 +465,8 @@ class MockSurvey(object):
             wave = c / nu  # convert to wavelength
             lwave = np.log(wave)  # ln(wavelength)
             trans = np.interp(1e10 * wave, fltr['wavelength'],
-                              fltr['transmission']) # interpolated transmission
-            lambda_eff = np.exp(np.trapz(trans * lwave, lnu) / 
+                              fltr['transmission'])  # interp transmission
+            lambda_eff = np.exp(np.trapz(trans * lwave, lnu) /
                                 np.trapz(trans, lnu)) * 1e10  # integrate
             fltr['lambda_eff'] = lambda_eff
 
@@ -569,7 +569,7 @@ class MockSurvey(object):
             the filter.
 
         mode : {`'name'`, `'index'`, `'counter'`}
-            Whether to search among the provided names/indices (from the 
+            Whether to search among the provided names/indices (from the
             `filter_list` file) or the native position in the filters in the
             stored list. Default is `'name'`.
 
@@ -586,7 +586,7 @@ class MockSurvey(object):
                 raise ValueError("{0} does not match any {1} among the "
                                  "filters.".format(ref, mode))
             self.ref_filter = np.arange(self.NFILTER)[sel][0]
-        
+
     def sample_params(self, Nobj, mbounds=None, zbounds=(0, 15),
                       Nm=1000, Nz=1000, pm_kwargs=None, ptm_kwargs=None,
                       pztm_kwargs=None, verbose=True):
@@ -671,8 +671,8 @@ class MockSurvey(object):
         templates = np.empty(Nobj, dtype='int')
         for i in range(self.NTYPE):
             n = int(sum(types == i))  # number of objects of a given type
-            templates[types==i] = np.random.choice(self.NTEMPLATE, size=n,
-                                                   p=tmp_p[i])
+            templates[types == i] = np.random.choice(self.NTEMPLATE, size=n,
+                                                     p=tmp_p[i])
 
         if verbose:
             sys.stderr.write('done! ')
@@ -757,10 +757,10 @@ class MockSurvey(object):
             # Integrate the flux over the filter. Interpolation is performed
             # using the arcsinh transform for improved numerical stability.
             phot[i] = [np.trapz(np.sinh(np.interp(f_lw, tlw[t] + np.log(1 + z),
-                                                  np.arcsinh(tfnu[t])))
-                                * f_t / f_nu * te, f_nu) / f_n
+                                                  np.arcsinh(tfnu[t]))) *
+                                f_t / f_nu * te, f_nu) / f_n
                        for f_t, f_nu, f_lw, f_n, te in zip(filt_t, filt_nu,
-                                                           flw, norm, 
+                                                           flw, norm,
                                                            igm_teff)]
 
         # Normalize photometry to reference magnitude.
@@ -811,7 +811,7 @@ class MockSurvey(object):
                   verbose=True):
         """
 
-        Generate (noisy) photometry for `Nobj` objects sampled from the 
+        Generate (noisy) photometry for `Nobj` objects sampled from the
         prior. Wraps :meth:`sample_params` and :meth:`sample_phot`. Results are
         stored internally under `data`.
 
@@ -929,10 +929,11 @@ class MockSurvey(object):
 
                 # Integrate the flux over the filter. Interpolation is done
                 # using the arcsinh transform for improved numerical stability.
-                phot[i, j] = [np.trapz(np.sinh(np.interp(f_lw, tlw[j] +
+                phot[i, j] = [np.trapz(f_t / f_nu * te *
+                                       np.sinh(np.interp(f_lw, tlw[j] +
                                                          np.log(1 + z),
-                                                         np.arcsinh(tfnu[j])))
-                                       * f_t / f_nu * te, f_nu) / f_n
+                                                         np.arcsinh(tfnu[j]))),
+                                       f_nu) / f_n
                               for f_t, f_nu, f_lw, f_n, te in zip(filt_t,
                                                                   filt_nu,
                                                                   flw, norm,

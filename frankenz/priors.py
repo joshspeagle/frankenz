@@ -23,8 +23,9 @@ __all__ = ["pmag", "_bpz_prior", "bpz_pt_m", "bpz_pz_tm"]
 bpz_ptm = None
 bpz_pztm = None
 
-def pmag(mag, maglim, mbounds=(10, 28), alpha=15., beta=2., gamma=1.,
-         Npoints=1000): 
+
+def pmag(mag, maglim, mbounds=(10., 28.), alpha=15., beta=2., gamma=1.,
+         Npoints=1000):
     """
     Function that returns P(mag) given an input magnitude limit `maglim` as::
 
@@ -68,7 +69,7 @@ def pmag(mag, maglim, mbounds=(10, 28), alpha=15., beta=2., gamma=1.,
     pmgrid = mgrid**alpha * np.exp(-(mgrid / (maglim - gamma))**beta)  # P(mag)
     pmgrid /= np.trapz(pmgrid, mgrid)  # normalize integral
     pm = np.interp(mag, mgrid, pmgrid)  # extract P(mag)
-    
+
     return pm
 
 
@@ -99,7 +100,7 @@ def _bpz_prior(m, zgrid, mbounds=(20, 32), zbounds=(0, 15)):
         Type fraction at fixed magnitude.
 
     """
-        
+
     # Formula: zm = zo + km*dm,  p(z | T, m) = z**a * exp(-(z / zm)**a)
     # coefficients from Table 1 of Benitez (2000)
     a = np.array([2.465, 1.806, 0.906])
@@ -111,25 +112,26 @@ def _bpz_prior(m, zgrid, mbounds=(20, 32), zbounds=(0, 15)):
     fo_t = np.array([0.35, 0.5, 0.15])
 
     # Establish magnitude bounds.
-    m = np.clip(m, mbounds[0], mbounds[1]) 
+    m = np.clip(m, mbounds[0], mbounds[1])
     dm = m - mbounds[0]  # dmag
-    
+
     # Establish redshift bounds.
     zmt = np.clip(zo + km * dm, zbounds[0], zbounds[1])
     zmt_at_a = zmt**a
     zt_at_a = np.power.outer(zgrid, a)
-    
+
     # Compute morphological fractions (0=Ell/S0, 1=Spiral, 2=Irr).
     f_t = np.zeros(3)
     f_t[:2] = fo_t[:2] * np.exp(-k_t * dm)
     f_t[2] = 1 - sum(f_t)
-    
+
     # Compute probability.
     p_i = zt_at_a * np.exp(-np.clip(zt_at_a / zmt_at_a, 0., 700.))
     p_i /= p_i.sum(axis=0)
     p_i *= f_t
-    
+
     return p_i, f_t
+
 
 def bpz_pt_m(t, m, mbounds=(20, 32), bpz_ptm_func=None):
     """

@@ -48,12 +48,13 @@ def _madau_tau1(wave, z):
              919.6, 918.4]  # n->1 transitions (n=2,3,...,12)
     coeffs = [0.0037, 0.00177, 0.00106, 0.000584, 0.00044, 0.00040, 0.00037,
               0.00035, 0.00033, 0.00032, 0.00031]  # coefficients
-    
+
     # Apply attenuation from absorption lines.
     for l, c in zip(lines, coeffs):
         tau1 += _madau_t1(wave, z, l, c)
 
     return tau1
+
 
 def _madau_tau2(wave, z):
     """
@@ -76,6 +77,7 @@ def _madau_tau2(wave, z):
 
     return tau2
 
+
 def madau_teff(wave, z):
     """
     Applies attenuation from the IGM at <1216 Angstroms at a particular
@@ -85,7 +87,7 @@ def madau_teff(wave, z):
     """
 
     # Compute optical depth by splicing together <912 and 912-1216 components.
-    tau = _madau_tau1(wave, z) + _madau_tau2(wave,z)
+    tau = _madau_tau1(wave, z) + _madau_tau2(wave, z)
 
     # Convert to **effective transmission**.
     teff = np.exp(-tau)
