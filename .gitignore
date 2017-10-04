@@ -65,3 +65,6 @@ docs/examples
 # old files
 old/*
 work/*
+
+# data
+data/*

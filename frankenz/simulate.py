@@ -514,9 +514,10 @@ class MockSurvey(object):
         self.NTEMPLATE = len(self.templates)  # number of templates
 
         # Divide our templates into groups.
-        self.TYPES, self.TYPE_COUNTS = np.unique([t['type'] 
-                                                  for t in self.templates],
-                                                 return_counts=True)
+        ttypes = [t['type'] for t in self.templates]
+        _, idx, self.TYPE_COUNTS = np.unique(ttypes, return_index=True,
+                                             return_counts=True)
+        self.TYPES = np.array(ttypes)[np.sort(idx)]
         if len(self.TYPES) == 1:  # if no types provided, all are unique
             self.TYPES = np.arange(self.NTEMPLATE).astype('str')
             self.TYPE_COUNTS = np.ones(self.NTEMPLATE)
@@ -749,20 +750,18 @@ class MockSurvey(object):
         for i, (t, z) in enumerate(zip(templates, redshifts)):
             # Compute reddening.
             if red_fn is not None:
-                igm_teff = red_fn(np.exp(tlw[t]) * (1 + z), z)  # eff. trans.
+                igm_teff = [red_fn(np.exp(f_lw), z) for f_lw in flw]
             else:
-                igm_teff = np.ones_like(tlw[j])
+                igm_teff = [np.ones_like(f_lw) for f_lw in flw]
 
             # Integrate the flux over the filter. Interpolation is performed
             # using the arcsinh transform for improved numerical stability.
             phot[i] = [np.trapz(np.sinh(np.interp(f_lw, tlw[t] + np.log(1 + z),
                                                   np.arcsinh(tfnu[t])))
-                                * f_t / f_nu *
-                                np.exp(np.interp(f_lw, tlw[t] + np.log(1 + z),
-                                                 np.log(igm_teff))),  # interp
-                                f_nu) / f_n  # complete integral
-                       for f_t, f_nu, f_lw, f_n in zip(filt_t, filt_nu,
-                                                       flw, norm)]
+                                * f_t / f_nu * te, f_nu) / f_n
+                       for f_t, f_nu, f_lw, f_n, te in zip(filt_t, filt_nu,
+                                                           flw, norm, 
+                                                           igm_teff)]
 
         # Normalize photometry to reference magnitude.
         with warnings.catch_warnings():
@@ -924,22 +923,20 @@ class MockSurvey(object):
             for j in range(self.NTEMPLATE):
                 # Compute reddening.
                 if red_fn is not None:
-                    igm_teff = red_fn(np.exp(tlw[j]) * (1 + z), z)  # IGM teff
+                    igm_teff = [red_fn(np.exp(f_lw), z) for f_lw in flw]
                 else:
-                    igm_teff = np.ones_like(tlw[j])
+                    igm_teff = [np.ones_like(f_lw) for f_lw in flw]
 
                 # Integrate the flux over the filter. Interpolation is done
                 # using the arcsinh transform for improved numerical stability.
                 phot[i, j] = [np.trapz(np.sinh(np.interp(f_lw, tlw[j] +
                                                          np.log(1 + z),
                                                          np.arcsinh(tfnu[j])))
-                                       * f_t / f_nu *
-                                       np.exp(np.interp(f_lw, tlw[j] +
-                                                        np.log(1 + z),
-                                                        np.log(igm_teff))),
-                                       f_nu) / f_n  # complete integral
-                              for f_t, f_nu, f_lw, f_n in zip(filt_t, filt_nu,
-                                                              flw, norm)]
+                                       * f_t / f_nu * te, f_nu) / f_n
+                              for f_t, f_nu, f_lw, f_n, te in zip(filt_t,
+                                                                  filt_nu,
+                                                                  flw, norm,
+                                                                  igm_teff)]
 
         if verbose:
             sys.stderr.write('done!\n')
