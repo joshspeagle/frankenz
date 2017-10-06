@@ -1,156 +1,26 @@
-###############################
-########## FRANKEN-Z ##########
-###############################
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 
-# Flexible Regression over Associated Neighbors with Kernel dEnsity estimatioN for Redshift (Z)
-# Authors: Josh Speagle (Harvard University; jspeagle@cfa.harvard.edu).
-# Released under MIT License.
-# Please see Speagle et al. (2017) arxiv:XXXX.XXXXX for more details.
+"""
+FRANKEN-Z package.
 
+"""
 
-####################################################################################################
-
-
-########## MODULES ##########
-
-# initializing Pylab environment
+from __future__ import (print_function, division)
+import six
+from six.moves import range
 import numpy as np
-import matplotlib as mpl
 import scipy
-from numpy import *
-from matplotlib import *
-from matplotlib.pyplot import *
-from scipy import *
-
-# general functions
-import pandas # uniqueness checks
-import sys # outputs
-import os # used to check for files
-from astropy.io import fits # I/O on fits
-from sklearn.externals import joblib # I/O on ML models
-from scipy import interpolate # interpolation
-
-# machine learning
-from sklearn import tree # decision trees
-from sklearn import neighbors # nearest neighbors
-from sklearn import base # additional methods
-
-# statistics
+import pandas
+import sys
+import os
+from scipy.spatial import KDTree
 from scipy import stats
-from scipy import random
-
-# random number generation
-from numpy.random import *
-from numpy.random import choice
-
-# manual memory management
 import gc
 
-# confidence intervals
-SIG1 = 68.2689492/100.
-SIG2 = 95.4499736/100.
-SIG3 = 99.7300204/100.
+from .pdf import *
 
-# useful constants
-c = 299792458.0 # speed of light in m/s
-
-
-########## PLOTTING DEFAULTS ##########
-
-# declaring plotting stuff
-from matplotlib.font_manager import FontProperties
-from matplotlib import gridspec
-rcParams.update({'xtick.major.pad': '7.0'})
-rcParams.update({'xtick.major.size': '7.5'})
-rcParams.update({'xtick.major.width': '1.5'})
-rcParams.update({'xtick.minor.pad': '7.0'})
-rcParams.update({'xtick.minor.size': '3.5'})
-rcParams.update({'xtick.minor.width': '1.0'})
-rcParams.update({'ytick.major.pad': '7.0'})
-rcParams.update({'ytick.major.size': '7.5'})
-rcParams.update({'ytick.major.width': '1.5'})
-rcParams.update({'ytick.minor.pad': '7.0'})
-rcParams.update({'ytick.minor.size': '3.5'})
-rcParams.update({'ytick.minor.width': '1.0'})
-rcParams.update({'xtick.color': 'k'})
-rcParams.update({'ytick.color': 'k'})
-rcParams.update({'font.size': 30})
-
-
-####################################################################################################
-
-
-########## LIKELIHOODS ##########
-
-
-def loglikelihood(data, data_err, data_mask, models, models_err, models_mask):
-    """
-    Compute -2lnL w/ FIXED scaling using a set of models W/ ERRORS.
-
-    Keyword arguments:
-    data -- input values
-    data_err -- input errors
-    data_mask -- mask for missing input data
-    models -- collection of comparison models
-    models_err -- model errors
-    models_mask -- mask for missing model data
-
-    Outputs:
-    chi2_mod -- -2lnL for each model
-    Ndim -- number of observations used in fit
-    """
-
-    tot_var = square(data_err) + square(models_err) # combined variance
-    tot_mask = data_mask * models_mask # combined binary mask
-    Ndim = tot_mask.sum(axis=1) # number of bands
-
-    # compute ln(likelihood)    
-    resid = data - models # residuals
-    chi2 = (tot_mask * square(resid) / tot_var).sum(axis=1) # compute standard chi2
-    chi2_mod = chi2 - Ndim # normalize by E[chi2(N)]
-    
-    return chi2_mod, Ndim
-
-
-def loglikelihood_s(data, data_err, data_mask, models, models_err, models_mask, return_s=False):
-    """
-    Compute -2lnL W/ FREE scaling using a set of models W/O ERRORS.
-
-    Keyword arguments:
-    data -- input values
-    data_err -- input errors
-    data_mask -- mask for missing input data
-    models -- collection of comparison models
-    models_err -- model errors
-    models_mask -- mask for missing model data
-    return_s -- return the maximum-likelihood scalefactor (default=False)
-
-    Outputs:
-    chi2_mod -- -2lnL for each model
-    Ndim -- number of observations used in fit
-    scale_vals -- maximum-likelihood model scalefactor
-    """
-
-    tot_mask = data_mask * models_mask # combined binary mask
-    data_var = square(data_err) # data variance
-    Ndim = tot_mask.sum(axis=1) # number of bands
-    
-    # derive scalefactors between data and models
-    inter_vals = (tot_mask * models * data[None,:] / data_var[None,:]).sum(axis=1) # interaction term
-    shape_vals = (tot_mask * square(models) / data_var[None,:]).sum(axis=1) # model-dependent term (i.e. quadratic 'steepness' of chi2)
-    scale_vals = inter_vals / shape_vals # maximum-likelihood scalefactors
-
-    # compute ln(likelihood)
-    resid = data - scale_vals[:,None]*models # compute scaled residuals
-    
-    chi2 = (tot_mask * square(resid) / data_var[None,:]).sum(axis=1) # compute chi2
-    chi2_mod = chi2 - (Ndim-1) # normalize by E[chi2(N-1)]
-
-    if return_s:
-        return chi2_mod, Ndim, scale_vals
-    else:
-        return chi2_mod, Ndim
-
+__all__ = [""]
 
 
 ########## MAGNITUDE MAPS ##########
@@ -409,103 +279,6 @@ def pdfs_summary_statistics(target_grid, target_pdfs):
     sys.stdout.write("done!\n")
 
     return pdf_mean, pdf_med, pdf_mode, pdf_mc, pdf_l68, pdf_h68, pdf_l95, pdf_h95, pdf_std
-
-
-
-########## KERNAL DENSITY ESTIMATION ##########
-
-
-def gaussian(mu, std, x):
-    """
-    Compute (normalized) Gaussian kernal.
-
-    Keyword arguments:
-    mu -- mean (center)
-    var -- standard deviation (width)
-    x -- input grid
-
-    Outputs:
-    Normal(x | mu, std)
-    """
-    
-    dif = x - mu # difference
-    norm = 1. / sqrt(2*pi) / std # normalization
-    
-    return norm * exp(-0.5 * square(dif/std))
-
-
-def pdf_kde(y, y_std, y_wt, x, dx, Ny, Nx, sig_thresh=5, wt_thresh=1e-3):
-    """
-    Compute smoothed PDF using kernel density estimation.
-
-    Keyword arguments:
-    y -- Gaussian kernel mean
-    y_std -- Gaussian kernel standard deviation
-    y_wt -- associated weight
-    x -- PDF grid
-    dx -- PDF spacing
-    Ny -- number of objects
-    Nx -- number of grid elements
-    sig_thresh -- +/-sigma threshold for clipping kernels (default=5)
-    wt_thresh -- wt/wt_max threshold for clipping observations (default=1e-3)
-
-    Outputs:
-    pdf -- probability distribution function (PDF) evaluated over x
-    """
-
-    # clipping kernel
-    centers=((y-x[0]) / dx).astype(int) # discretized centers
-    offsets = (sig_thresh * y_std / dx).astype(int) # discretized offsets
-    uppers, lowers = centers+offsets, centers-offsets # upper/lower bounds
-    uppers[uppers>Nx], lowers[lowers<0] = Nx, 0 # limiting to grid edges
-
-    # initialize PDF
-    pdf = zeros(Nx)
-
-    # limit analysis to observations with statistically relevant weight
-    sel_arr = y_wt > (wt_thresh*y_wt.max())
-
-    # compute PDF
-    for i in arange(Ny)[sel_arr]: # within selected observations
-        pdf[lowers[i]:uppers[i]] += y_wt[i] * gaussian(y[i], y_std[i], x[lowers[i]:uppers[i]]) # stack weighted Gaussian kernel over array slic
-    
-    return pdf
-
-
-def pdf_kde_dict(ydict, ywidth, y_pos, y_idx, y_wt, x, dx, Ny, Nx, wt_thresh=1e-3):
-    """
-    Compute smoothed PDF from point estimates using KDE utilizing a PRE-COMPUTED DICTIONARY.
-
-    Keyword arguments:
-    ydict -- dictionary of kernels
-    ywidth -- associated widths of kernels
-    y_pos -- discretized position of observed data
-    y_idx -- corresponding index of kernel from dictionary
-    y_wt -- associated weight
-    x -- PDF grid
-    dx -- PDF spacing
-    Ny -- number of objects
-    Nx -- number of grid elements
-    wt_thresh -- wt/wt_max threshold for clipping observations (default=1e-3)
-
-    Outputs:
-    pdf -- probability distribution function (PDF) evaluated over x
-    """
-
-    # initialize PDF
-    pdf = zeros(Nx) 
-
-    # limit analysis to observations with statistically relevant weight
-    sel_arr = y_wt > (wt_thresh*y_wt.max())
-
-    # compute PDF
-    for i in arange(Ny)[sel_arr]: # within selected observations
-        idx = y_idx[i] # dictionary element
-        yp = y_pos[i] # kernel center
-        yw = ywidth[idx] # kernel width
-        pdf[yp-yw:yp+yw+1] += y_wt[i] * ydict[idx] # stack weighted Gaussian kernel over array slice
-    
-    return pdf
 
 
 ####################################################################################################

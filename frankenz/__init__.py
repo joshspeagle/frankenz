@@ -7,5 +7,6 @@ from six.moves import range
 from . import simulate
 from . import priors
 from . import reddening
+from . import pdf
 
 __version__ = "0.0.1"
