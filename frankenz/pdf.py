@@ -373,8 +373,10 @@ def gauss_kde(y, y_std, x, dx=None, y_wt=None, sig_thresh=5., wt_thresh=1e-3):
     # Compute PDF.
     for i in sel_arr:
         # Stack weighted Gaussian kernel over array slice.
-        pdf[lowers[i]:uppers[i]] += y_wt[i] * gaussian(y[i], y_std[i],
-                                                       x[lowers[i]:uppers[i]])
+        gkde = gaussian(y[i], y_std[i], x[lowers[i]:uppers[i]])
+        norm = sum(gkde)
+        if norm > 0.:
+            pdf[lowers[i]:uppers[i]] += y_wt[i] / norm * gkde
 
     return pdf
 
