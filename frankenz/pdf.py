@@ -18,7 +18,9 @@ import numpy as np
 import warnings
 
 __all__ = ["_loglike", "_loglike_s", "loglike",
-           "gaussian", "gauss_kde", "gauss_kde_dict"]
+           "gaussian", "gauss_kde", "gauss_kde_dict",
+           "asinh_mag", "inv_asinh_mag",
+           "PDFDict"]
 
 
 def _loglike(data, data_err, data_mask, models, models_err, models_mask,
@@ -165,9 +167,9 @@ def _loglike_s(data, data_err, data_mask, models, models_err, models_mask,
 
     # Derive scalefactors between data and models.
     inter_num = tot_mask * models * data[None, :]
-    inter_vals = np.sum(inter_num / tot_var[None, :], axis=1)  # "interaction"
+    inter_vals = np.sum(inter_num / tot_var, axis=1)  # "interaction"
     shape_num = tot_mask * np.square(models)
-    shape_vals = np.sum(shape_num / tot_var[None, :], axis=1)  # "shape" term
+    shape_vals = np.sum(shape_num / tot_var, axis=1)  # "shape" term
     scale = inter_vals / shape_vals  # scalefactor
 
     # Compute chi2.
@@ -188,12 +190,12 @@ def _loglike_s(data, data_err, data_mask, models, models_err, models_mask,
                                                       models_err)
 
             # Compute new scale.
-            inter_vals = np.sum(inter_num / tot_var[None, :], axis=1)
-            shape_vals = np.sum(shape_num / tot_var[None, :], axis=1)
-            scale = inter_vals / shape_vals
+            inter_vals = np.sum(inter_num / tot_var, axis=1)
+            shape_vals = np.sum(shape_num / tot_var, axis=1)
+            scale_new = inter_vals / shape_vals
 
             # Compute new chi2.
-            resid = data - scale[:, None] * models
+            resid = data - scale_new[:, None] * models
             chi2 = np.sum(tot_mask * np.square(resid) / tot_var, axis=1)
             lnl_new = -0.5 * chi2
 
@@ -202,12 +204,12 @@ def _loglike_s(data, data_err, data_mask, models, models_err, models_mask,
                                    np.sum(np.log(tot_var), axis=1))
 
             # Check tolerance.
-            loglike_err = ((lnl_new + lnl_norm_new) - (lnl + lnl_norm) /
+            loglike_err = ((lnl_new + lnl_norm_new - lnl - lnl_norm) /
                            (lnl + lnl_norm))
             lerr = max(abs(loglike_err))
 
             # Assign new values.
-            lnl, lnl_norm = lnl_new, lnl_norm_new
+            lnl, lnl_norm, scale = lnl_new, lnl_norm_new, scale_new
 
     # Apply dimensionality prior.
     if dim_prior:
@@ -381,40 +383,241 @@ def gauss_kde(y, y_std, x, dx=None, y_wt=None, sig_thresh=5., wt_thresh=1e-3):
     return pdf
 
 
-def pdf_kde_dict(ydict, ywidth, y_pos, y_idx, x, dx=None, y_wt=None,
-                 wt_thresh=1e-3):
+def gauss_kde_dict(pdfdict, y=None, y_std=None, y_idx=None, y_std_idx=None, 
+                   y_wt=None, wt_thresh=1e-3):
     """
-    Compute smoothed PDF from point estimates using KDE utilizing a
-    PRE-COMPUTED DICTIONARY.
+    Compute smoothed PDF using kernel density estimation based on a
+    pre-computed dictionary and pre-defined grid.
 
-    Keyword arguments:
-    ydict -- dictionary of kernels
-    ywidth -- associated widths of kernels
-    y_pos -- discretized position of observed data
-    y_idx -- corresponding index of kernel from dictionary
-    y_wt -- associated weight
-    x -- PDF grid
-    dx -- PDF spacing
-    Ny -- number of objects
-    Nx -- number of grid elements
-    wt_thresh -- wt/wt_max threshold for clipping observations (default=1e-3)
+    Parameters
+    ----------
+    pdfdict : :class:`PDFDict` instance
+        `PDFDict` instance containing the grid and kernels.
 
-    Outputs:
-    pdf -- probability distribution function (PDF) evaluated over x
+    y, y_std : `~numpy.ndarray` with shape (Ny,), optional
+        Array of observed values and associated (Gaussian) errors. Mutually
+        exclusive with `y_idx` and `y_std_idx`.
+
+    y_idx, y_std_idx : `~numpy.ndarray` with shape (Ny,), optional
+        Array of dictionary indices corresponding to the observed values and
+        associated errors. Mutually exclusive with `y` and `y_std`. Preference
+        will be given to `y_idx` and `y_std_idx` if provided.
+
+    y_wt : `~numpy.ndarray` with shape (Ny,), optional
+        An associated set of weights for each of the elements in `y`. If not
+        provided, objects will be weighted uniformly.
+
+    wt_thresh : float, optional
+        The threshold `wt_thresh * max(y_wt)` used to ignore objects
+        with (relatively) negligible weights. Default is `1e-3`.
+
+    Returns
+    -------
+    pdf : `~numpy.ndarray` with shape (Nx,)
+        Probability distribution function (PDF) evaluated over `pdfdict.grid`.
+
     """
 
-    # initialize PDF
-    pdf = zeros(Nx) 
+    # Check for valid inputs.
+    if y_idx is not None and y_std_idx is not None:
+        pass
+    elif y is not None and y_std is not None:
+        y_idx, y_std_idx = pdfdict.fit(y, y_std)
+    else:
+        raise ValueError("At least one pair of (`y`, `y_std`) or "
+                         "(`y_idx`, `y_idx_std`) must be specified.")
 
-    # limit analysis to observations with statistically relevant weight
-    sel_arr = y_wt > (wt_thresh*y_wt.max())
+    # Initialize PDF.
+    Nx = pdfdict.Ngrid
+    pdf = np.zeros(Nx)
 
-    # compute PDF
-    for i in arange(Ny)[sel_arr]:  # within selected observations
-        idx = y_idx[i]  # dictionary element
-        yp = y_pos[i]  # kernel center
-        yw = ywidth[idx]  # kernel width
-        pdf[yp-yw:yp+yw+1] += y_wt[i] * ydict[idx]
-        # stack weighted Gaussian kernel over array slice
+    # Apply weight thresholding.
+    Ny = len(y_idx)
+    if y_wt is None:
+        y_wt = np.ones(Ny)
+    sel_arr = np.arange(Ny)[y_wt > (wt_thresh * np.max(y_wt))]
+
+    # Compute PDF.
+    sigma_dict = pdfdict.sigma_dict  # Gaussian kernel dictionary
+    sigma_width = pdfdict.sigma_width  # number of elements in each kernel
+    sigma_dict_cdf = pdfdict.sigma_dict_cdf  # CDF of Gaussian kernel
+    for i in sel_arr:
+        # Select position and kernel.
+        idx = y_std_idx[i]  # dictionary element
+        pos = y_idx[i]  # kernel center
+        kernel = sigma_dict[idx]  # Gaussian kernel
+        width = sigma_width[idx]  # kernel width
+        kcdf = sigma_dict_cdf[idx]  # kernel CDF
+
+        # Deal with edge effects.
+        low, high = max(pos - width, 0), min(pos + width + 1, Nx)
+        lpad, hpad = low - (pos - width), high - (pos + width + 1)
+        if lpad == 0:
+            norm = kcdf[hpad-1]
+        else:
+            norm = kcdf[hpad-1] - kcdf[lpad-1]
+
+        # Stack weighted Gaussian kernel over array slice.
+        pdf[low:high] += (y_wt[i] / norm) * kernel[lpad:2*width+1+hpad]
     
     return pdf
+
+
+def asinh_mag(phot, err, skynoise=1., zeropoints=1.):
+    """
+    Concert photometry to asinh magnitudes (i.e. "Luptitudes"). See Lupton et
+    al. (1999) for more details.
+
+    Parameters
+    ----------
+    phot : `~numpy.ndarray` with shape (Nobs, Nfilt)
+        Observed photometric flux densities.
+
+    err : `~numpy.ndarray` with shape (Nobs, Nfilt)
+        Observed photometric flux density errors.
+
+    skynoise : float or `~numpy.ndarray` with shape (Nfilt,)
+        Background sky noise. Used as a "softening parameter".
+        Default is `1.`.
+
+    zeropoints : float or `~numpy.ndarray` with shape (Nfilt,)
+        Flux density zero-points. Used as a "location parameter".
+        Default is `1.`.
+
+    Returns
+    -------
+    mag : `~numpy.ndarray` with shape (Nobs, Nfilt)
+        Asinh magnitudes corresponding to input `phot`.
+
+    mag_err : `~numpy.ndarray` with shape (Nobs, Nfilt)
+        Asinh magnitudes errors corresponding to input `err`.
+
+    """
+
+    # Compute asinh magnitudes.
+    mag = -2.5 / np.log(10.) * (np.arcsinh(phot / (2. * skynoise)) + 
+                                np.log(skynoise / zeropoints))
+
+    # Compute errors.
+    mag_err = np.sqrt(np.square(2.5 * np.log10(np.e) * err) / 
+                      (np.square(2. * skynoise) + np.square(phot)))
+
+    return mag, mag_err
+
+
+def inv_asinh_mag(mag, err, skynoise=1., zeropoints=1.):
+    """
+    Concert asinh magnitudes to photometry.
+
+    Parameters
+    ----------
+    mag : `~numpy.ndarray` with shape (Nobs, Nfilt)
+        Asinh magnitudes.
+
+    err : `~numpy.ndarray` with shape (Nobs, Nfilt)
+        Asinh magnitude errors.
+
+    skynoise : float or `~numpy.ndarray` with shape (Nfilt,)
+        Background sky noise. Used as a "softening parameter".
+        Default is `1.`.
+
+    zeropoints : float or `~numpy.ndarray` with shape (Nfilt,)
+        Flux density zero-points. Used as a "location parameter".
+        Default is `1.`.
+
+    Returns
+    -------
+    phot : `~numpy.ndarray` with shape (Nobs, Nfilt)
+        Photometric flux densities corresponding to input `mag`.
+
+    phot_err : `~numpy.ndarray` with shape (Nobs, Nfilt)
+        Photometric errors corresponding to input `err`.
+    """
+
+    # Compute photometry.
+    phot = (2. * skynoise) * np.sinh(np.log(10.) / -2.5 * mag - 
+                                     np.log(skynoise / zeropoint))
+
+    # Compute errors.
+    phot_err = np.sqrt((np.square(2. * skynoise) + np.square(phot)) *
+                       np.square(err)) / (2.5 * np.log10(np.e))
+
+    return phot, phot_err
+
+
+class PDFDict():
+    """
+    Class used to establish a set of underlying grids and Gaussian kernels
+    used to quickly compute PDFs. PDFs are computed by sliding, truncating, and
+    stacking our kernels along the underlying grid. 
+
+    Parameters
+    ----------
+    pdf_grid : `~numpy.ndarray` of shape (Ngrid,)
+        The underlying discretized grid used to evaluate PDFs. **This grid
+        must be evenly spaced.**
+
+    sigma_grid : `~numpy.ndarray` of shape (Ndict,)
+        The standard deviations used to compute the set of discretized
+        Gaussian kernels.
+
+    sigma_trunc : float, optional
+        The number of sigma used before truncating our Gaussian kernels.
+        Default is `5.`.
+
+    """
+
+    
+    def __init__(self, pdf_grid, sigma_grid, sigma_trunc=5.):
+
+        # Initialize quantities.
+        self.Ngrid = len(pdf_grid)
+        self.min, self.max = min(pdf_grid), max(pdf_grid)
+        self.delta = pdf_grid[1] - pdf_grid[0]
+        self.grid = np.array(pdf_grid)
+
+        # Create dictionary.
+        self.Ndict = len(sigma_grid)
+        self.sigma_grid = np.array(sigma_grid)
+        self.dsigma = sigma_grid[1] - sigma_grid[0]
+        self.sigma_width = np.array(np.ceil(sigma_grid * sigma_trunc / 
+                                    self.delta), dtype='int')
+        mid = int(self.Ngrid / 2)
+        self.sigma_dict = [gaussian(mu=self.grid[mid], std=s,
+                                    x=self.grid[mid-w:mid+w+1])
+                           for i, (s, w) in enumerate(zip(self.sigma_grid,
+                                                          self.sigma_width))]
+        self.sigma_dict_cdf = [np.cumsum(p) for p in self.sigma_dict]
+
+    def fit(self, X, Xe):
+        """
+        Map Gaussian PDFs onto the dictionary.
+
+        Parameters
+        ----------
+        X : `~numpy.ndarray` of shape (Nobs,)
+            Observed values.
+
+        Xe : `~numpy.ndarray` of shape (Nobs,)
+            Observed errors.
+
+        Returns
+        -------
+        X_idx : `~numpy.ndarray` of shape (Nobs,)
+            Corresponding indices on the dicretized mean grid.
+
+        Xe_idx : `~numpy.ndarray` of shape (Nobs,)
+            Corresponding indices on the discretized sigma grid.
+
+        """
+        
+        # Mean indices.
+        X_idx = ((X - self.grid[0]) / self.delta).round().astype('int')
+        
+        # Sigma (dictionary) indices.
+        Xe_idx = np.array(np.round((Xe - self.sigma_grid[0]) / self.dsigma),
+                          dtype='int')
+        Xe_idx[Xe_idx >= self.Ndict] = self.Ndict - 1  # impose error ceiling
+        Xe_idx[Xe_idx < 0] = 0  # impose error floor
+
+        return X_idx, Xe_idx

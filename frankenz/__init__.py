@@ -8,5 +8,7 @@ from . import simulate
 from . import priors
 from . import reddening
 from . import pdf
+from . import nn
+from . import plotting
 
 __version__ = "0.0.1"

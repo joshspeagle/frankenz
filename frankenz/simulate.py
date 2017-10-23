@@ -944,4 +944,4 @@ class MockSurvey(object):
             sys.stderr.flush()
 
         # Save results.
-        self.models = phot
+        self.models = {'data': phot, 'zgrid': redshifts}
