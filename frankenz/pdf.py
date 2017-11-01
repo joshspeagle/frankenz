@@ -16,9 +16,10 @@ import warnings
 import math
 import numpy as np
 import warnings
+from scipy.special import erf
 
 __all__ = ["_loglike", "_loglike_s", "loglike",
-           "gaussian", "gauss_kde", "gauss_kde_dict",
+           "gaussian", "gaussian_bin", "gauss_kde", "gauss_kde_dict",
            "asinh_mag", "inv_asinh_mag",
            "PDFDict"]
 
@@ -310,6 +311,21 @@ def gaussian(mu, std, x):
     dif = x - mu  # difference
     norm = np.sqrt(2. * np.pi) * std  # normalization
     pdf = np.exp(-0.5 * np.square(dif / std)) / norm
+
+    return pdf
+
+def gaussian_bin(mu, std, bins):
+    """
+    Gaussian kernal with mean `mu` and standard deviation `std` evaluated
+    over a set of bins with edges specified by `bins`. 
+    Returns the PDF integrated over the bins (i.e. an `N - 1`-length vector).
+
+    """
+
+    dif = bins - mu  # difference
+    y = dif / (np.sqrt(2) * std)  # divide by relative width
+    cdf = 0.5 * (1. + erf(y))  # CDF evaluated at bin edges
+    pdf = cdf[1:] - cdf[:-1]  # amplitude integrated over the bins
 
     return pdf
 
