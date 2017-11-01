@@ -1,16 +1,18 @@
-FRANKEN-Z
+frankenz
 =========
 
-**F**lexible **R**egression over **A**ssociated **N**eighbors with **K**ernel 
-D**E**nsity Estimatio**N** for Redshifts (**Z**)
+A photometric redshift monstrosity.
 
-**WARNING: This code is still in active development. Use at your own risk!**
+**This project is in active development. Use code/results at your own risk!**
 
 ### Documentation
-**In progress.**
+**Nonexistent.**
 
 ### Installation
-**In progress.**
+`frankenz` is installed by:
+```
+python setup.py install
+```
 
 ### Demos
 Several Jupyter notebooks that demonstrate most of the available features
