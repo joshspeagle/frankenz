@@ -86,7 +86,7 @@ def truth_vs_pdf(vals, errs, pdfs, pdict, weights=None, pdf_thresh=1e-3,
 
     # Compute 2-D stacked PDF.
     for i in range(Nobj):
-        if verbose and i%5000 == 0: 
+        if verbose and i % 5000 == 0:
             sys.stderr.write(str(i)+' ')
         if weights[i] > wt_thresh * wtmax:  # weight threshold cut
             tpdf = pdfs[i]  # pdf
@@ -95,7 +95,7 @@ def truth_vs_pdf(vals, errs, pdfs, pdict, weights=None, pdf_thresh=1e-3,
             x_bound = pdict.sigma_width[x_idx]  # kernel width
 
             # Stack results.
-            tstack = pdict.sigma_dict[x_idx][:,None] * tpdf[tsel]  # 2-D pdf
+            tstack = pdict.sigma_dict[x_idx][:, None] * tpdf[tsel]  # 2-D pdf
             xlow = max(x_cent - x_bound, 0)
             xhigh = min(x_cent + x_bound + 1, Ngrid)
             lpad = xlow - (x_cent - x_bound)
@@ -108,13 +108,11 @@ def truth_vs_pdf(vals, errs, pdfs, pdict, weights=None, pdf_thresh=1e-3,
 
     # plot results
     stack[stack < plot_thresh] = np.nan
-    plt.imshow(stack.T, origin='lower', aspect='auto', 
-               extent=(pdict.grid[0], pdict.grid[-1], 
+    plt.imshow(stack.T, origin='lower', aspect='auto',
+               extent=(pdict.grid[0], pdict.grid[-1],
                        pdict.grid[0], pdict.grid[-1]), cmap=cmap)
     plt.colorbar(label='PDF')
     plt.plot([0, 100], [0, 100], 'k--', lw=3)  # 1:1 relation
-    #plot(array([0,100]),array([0,100])*1.15+0.15,'k-.',lw=2)  # +15% bound
-    #plot(array([0,100]),array([0,100])*0.85-0.15,'k-.',lw=2)  # -15% bound 
     plt.xlim([pdict.grid[0], pdict.grid[-1]])
     plt.ylim([pdict.grid[0], pdict.grid[-1]])
     plt.xlabel('Truth')

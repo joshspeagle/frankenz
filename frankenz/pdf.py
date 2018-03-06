@@ -297,7 +297,7 @@ def loglike(data, data_err, data_mask, models, models_err, models_mask,
         results = _loglike(data, data_err, data_mask, models, models_err,
                            models_mask, ignore_model_err=ignore_model_err,
                            dim_prior=dim_prior)
-    
+
     return results
 
 
@@ -314,10 +314,11 @@ def gaussian(mu, std, x):
 
     return pdf
 
+
 def gaussian_bin(mu, std, bins):
     """
     Gaussian kernal with mean `mu` and standard deviation `std` evaluated
-    over a set of bins with edges specified by `bins`. 
+    over a set of bins with edges specified by `bins`.
     Returns the PDF integrated over the bins (i.e. an `N - 1`-length vector).
 
     """
@@ -380,7 +381,7 @@ def gauss_kde(y, y_std, x, dx=None, y_wt=None, sig_thresh=5., wt_thresh=1e-3):
     centers = np.array((y - x[0]) / dx, dtype='int')  # discretized centers
     offsets = np.array(sig_thresh * y_std / dx, dtype='int')  # offsets
     uppers, lowers = centers + offsets, centers - offsets  # upper/lower bounds
-    uppers[uppers>Nx], lowers[lowers<0] = Nx, 0  # limiting to grid edges
+    uppers[uppers > Nx], lowers[lowers < 0] = Nx, 0  # limiting to grid edges
 
     # Initialize PDF.
     pdf = np.zeros(Nx)
@@ -399,7 +400,7 @@ def gauss_kde(y, y_std, x, dx=None, y_wt=None, sig_thresh=5., wt_thresh=1e-3):
     return pdf
 
 
-def gauss_kde_dict(pdfdict, y=None, y_std=None, y_idx=None, y_std_idx=None, 
+def gauss_kde_dict(pdfdict, y=None, y_std=None, y_idx=None, y_std_idx=None,
                    y_wt=None, wt_thresh=1e-3):
     """
     Compute smoothed PDF using kernel density estimation based on a
@@ -475,7 +476,7 @@ def gauss_kde_dict(pdfdict, y=None, y_std=None, y_idx=None, y_std_idx=None,
 
         # Stack weighted Gaussian kernel over array slice.
         pdf[low:high] += (y_wt[i] / norm) * kernel[lpad:2*width+1+hpad]
-    
+
     return pdf
 
 
@@ -511,11 +512,11 @@ def asinh_mag(phot, err, skynoise=1., zeropoints=1.):
     """
 
     # Compute asinh magnitudes.
-    mag = -2.5 / np.log(10.) * (np.arcsinh(phot / (2. * skynoise)) + 
+    mag = -2.5 / np.log(10.) * (np.arcsinh(phot / (2. * skynoise)) +
                                 np.log(skynoise / zeropoints))
 
     # Compute errors.
-    mag_err = np.sqrt(np.square(2.5 * np.log10(np.e) * err) / 
+    mag_err = np.sqrt(np.square(2.5 * np.log10(np.e) * err) /
                       (np.square(2. * skynoise) + np.square(phot)))
 
     return mag, mag_err
@@ -551,7 +552,7 @@ def inv_asinh_mag(mag, err, skynoise=1., zeropoints=1.):
     """
 
     # Compute photometry.
-    phot = (2. * skynoise) * np.sinh(np.log(10.) / -2.5 * mag - 
+    phot = (2. * skynoise) * np.sinh(np.log(10.) / -2.5 * mag -
                                      np.log(skynoise / zeropoint))
 
     # Compute errors.
@@ -565,7 +566,7 @@ class PDFDict():
     """
     Class used to establish a set of underlying grids and Gaussian kernels
     used to quickly compute PDFs. PDFs are computed by sliding, truncating, and
-    stacking our kernels along the underlying grid. 
+    stacking our kernels along the underlying grid.
 
     Parameters
     ----------
@@ -583,7 +584,6 @@ class PDFDict():
 
     """
 
-    
     def __init__(self, pdf_grid, sigma_grid, sigma_trunc=5.):
 
         # Initialize quantities.
@@ -596,7 +596,7 @@ class PDFDict():
         self.Ndict = len(sigma_grid)
         self.sigma_grid = np.array(sigma_grid)
         self.dsigma = sigma_grid[1] - sigma_grid[0]
-        self.sigma_width = np.array(np.ceil(sigma_grid * sigma_trunc / 
+        self.sigma_width = np.array(np.ceil(sigma_grid * sigma_trunc /
                                     self.delta), dtype='int')
         mid = int(self.Ngrid / 2)
         self.sigma_dict = [gaussian(mu=self.grid[mid], std=s,
@@ -626,10 +626,10 @@ class PDFDict():
             Corresponding indices on the discretized sigma grid.
 
         """
-        
+
         # Mean indices.
         X_idx = ((X - self.grid[0]) / self.delta).round().astype('int')
-        
+
         # Sigma (dictionary) indices.
         Xe_idx = np.array(np.round((Xe - self.sigma_grid[0]) / self.dsigma),
                           dtype='int')

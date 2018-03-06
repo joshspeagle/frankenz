@@ -24,10 +24,10 @@ from .pdf import *
 __all__ = ["kNNMC"]
 
 
-class kNNMC():
+class kNNKMC():
     """
-    Locates a set of `Mk` nearest neighbors using Monte Carlo methods to
-    incorporate measurement errors over `M` members of an ensemble.
+    Locates a set of `K * k` nearest neighbors using Monte Carlo methods to
+    incorporate measurement errors over `K` members of an ensemble.
     Wraps `~scipy.spatial.KDTree`. Note that trees are only trained when
     searching for neighbors to save memory.
 
@@ -37,7 +37,7 @@ class kNNMC():
         The number of points where the algorithm switches over to brute force.
         Default is `100`.
 
-    M : int, optional
+    K : int, optional
         The number of members used in the ensemble to incorporate errors using
         Monte Carlo methods. Default is `25`.
 
@@ -61,11 +61,11 @@ class kNNMC():
 
     """
 
-    def __init__(self, leafsize=100, M=25, k=20, eps=1e-3, p=2,
+    def __init__(self, leafsize=100, K=25, k=20, eps=1e-3, p=2,
                  distance_upper_bound=np.inf):
         # Initialize values.
         self.leafsize = leafsize
-        self.M = M
+        self.K = K
         self.k = k
         self.eps = eps
         self.p = p
@@ -74,7 +74,7 @@ class kNNMC():
     def query(self, X_train, Xe_train, X_targ, Xe_targ,
               feature_map='asinh_mag', rstate=None):
         """
-        Find (at most) `Mk` unique neighbors for each training object.
+        Find (at most) `K * k` unique neighbors for each training object.
 
         Parameters
         ----------
@@ -90,11 +90,12 @@ class kNNMC():
         Xe_targ : `~numpy.ndarray` with shape (Ntest, Nfilt,)
             Target feature errors.
 
-        feature_map : function, optional
-            Function that transforms the input set of features `X` to a
-            new set of features `Xp` to help compress the data for nearest
-            neighbor searches. Options include `None` (the identity function)
-            and `'asinh_mag'` (asinh magnitudes). Default is `'asinh_mag'`.
+        feature_map : str or function, optional
+            Function that transforms the input set of features/errors `X, Xe`
+            to a new set of features/errors `Y, Ye` to facilitate nearest
+            neighbor searches. Built-in options are `None` (the identity
+            function) and `'asinh_mag'` (asinh magnitudes).
+            Default is `'asinh_mag'`.
 
         rstate : `~numpy.random.RandomState` instance, optional
             Random state instance. If not passed, the default `~numpy.random`
@@ -103,37 +104,46 @@ class kNNMC():
         Returns
         -------
         idxs :  `~numpy.ndarray` with shape (Ntest, M*k,)
-            Indices for each target object corresponding to the associated 
-            `M * k` neighbors among the training objects.
+            Indices for each target object corresponding to the associated
+            `K * k` neighbors among the training objects.
 
         Nidxs : `~numpy.ndarray` with shape (Ntest,)
             Number of unique indices for each target object.
 
         """
 
-        # Initialize values.
-        if feature_map is None:
-            feature_map = lambda x: x
+        # Initialize feature map.
+        if feature_map is None or feature_map == 'None':
+            # Identity function.
+            def feature_map(x):
+                return x
         elif feature_map == 'asinh_mag':
+            # Asinh mags (Luptitudes).
             feature_map = asinh_mag
         else:
-            raise ValueError("The provided feature map is not a valid option.")
+            try:
+                # Check if `feature_map` is a function.
+                feature_map(X_train[:5], Xe_train[:5])
+            except:
+                # If all else fails, raise an exception.
+                raise ValueError("The provided feature map is not valid.")
 
+        # Initialize RNG.
         if rstate is None:
             rstate = np.random
 
+        # Initialize values.
         Ntrain, Ntarg = len(X_train), len(X_targ)  # train/target size
-        Npred = self.M * self.k  # number of total neighbors
-        indices = np.empty((self.M, Ntarg, self.k),
-                                 dtype='int')  # non-unique indices
+        Npred = self.K * self.k  # number of total possible neighbors
+        indices = np.empty((self.K, Ntarg, self.k), dtype='int')  # all indices
         idxs = np.empty((Ntarg, Npred), dtype='int')  # unique indices
         Nidxs = np.empty(Ntarg, dtype='int')  # number of unique indices
 
         # Select neighbors.
-        for i in range(self.M):
+        for i in range(self.K):
             # Print progress.
-            sys.stderr.write("\rProgress: {0}/{1}          "
-                             .format(i + 1,self.M))
+            sys.stderr.write("\rFinding neighbors: {0}/{1}          "
+                             .format(i + 1, self.K))
             sys.stdout.flush()
 
             # Monte Carlo data.
@@ -146,19 +156,20 @@ class kNNMC():
 
             # Construct KDTree.
             kdtree = KDTree(X_train_t, leafsize=self.leafsize)
-            _, indices[i] = kdtree.query(X_targ_t, k=self.k, eps=self.eps,
-                                         p=self.p, 
+            _, indices[i] = kdtree.query(X_targ_t, k=self.k,
+                                         eps=self.eps, p=self.p,
                                          distance_upper_bound=self.dbound)
 
         # Select unique neighbors.
         sys.stderr.write('\n')
         for i in range(Ntarg):
             # Print progress.
-            sys.stderr.write("\rProgress: {0}/{1}               "
+            sys.stderr.write("\rSelecting unique neighbors: {0}/{1}          "
                              .format(i + 1, Ntarg))
             sys.stdout.flush()
 
-            # Using `pandas.unique` over `np.unique` to avoid sorting.
+            # Using `pandas.unique` over `np.unique` to avoid additional
+            # overhead due to auto-sorting.
             midx_unique = unique(indices[:, i, :].flatten())
             Nidx = len(midx_unique)
             Nidxs[i] = Nidx

@@ -40,7 +40,7 @@ setup(
     long_description=open("README.md").read(),
     package_data={"": ["README.md", "LICENSE", "AUTHORS.md"]},
     include_package_data=True,
-    install_requires=["numpy", "scipy", "matplotlib", "six"],
+    install_requires=["numpy", "scipy", "matplotlib", "six", "pandas"],
     keywords=["photo-z", "photometric redshift", "nearest neighbors", "knn",
               "bayesian"],
     classifiers=["Development Status :: 4 - Beta",
