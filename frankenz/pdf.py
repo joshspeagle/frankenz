@@ -67,6 +67,9 @@ def _loglike(data, data_err, data_mask, models, models_err, models_mask,
     Ndim : `~numpy.ndarray` of shape (Nmodel)
         Number of observations used in the fit (dimensionality).
 
+    chi2 : `~numpy.ndarray` of shape (Nmodel)
+        Chi-square values used to compute the log-likelihood.
+
     """
 
     # Initialize errors.
@@ -93,7 +96,7 @@ def _loglike(data, data_err, data_mask, models, models_err, models_mask,
         # Normalize by P(n) = exp(-n/2) * (1 / (sqrt(e) - 1)).
         lnl += (-0.5 * Ndim) - np.log(np.sqrt(np.e) - 1.)
 
-    return lnl + lnl_norm, Ndim
+    return lnl + lnl_norm, Ndim, chi2
 
 
 def _loglike_s(data, data_err, data_mask, models, models_err, models_mask,
@@ -149,6 +152,9 @@ def _loglike_s(data, data_err, data_mask, models, models_err, models_mask,
 
     Ndim : `~numpy.ndarray` of shape (Nmodel)
         Number of observations used in the fit (dimensionality).
+
+    chi2 : `~numpy.ndarray` of shape (Nmodel)
+        Chi-square values used to compute the log-likelihood.
 
     scale : `~numpy.ndarray` of shape (Nmodel), optional
         The factor used to scale the model observations to the observed data.
@@ -219,9 +225,9 @@ def _loglike_s(data, data_err, data_mask, models, models_err, models_mask,
         lnl += (-0.5 * (Ndim - 1)) + (0.5 - np.log(np.sqrt(np.e) - 1.))
 
     if return_scale:
-        return lnl + lnl_norm, Ndim, scale
+        return lnl + lnl_norm, Ndim, chi2, scale
     else:
-        return lnl + lnl_norm, Ndim
+        return lnl + lnl_norm, Ndim, chi2
 
 
 def loglike(data, data_err, data_mask, models, models_err, models_mask,

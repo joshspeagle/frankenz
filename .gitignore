@@ -65,6 +65,7 @@ docs/examples
 # old files
 old/*
 work/*
+config/*
 
 # data
 data/*

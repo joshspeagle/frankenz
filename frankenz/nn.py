@@ -24,7 +24,7 @@ from .pdf import *
 __all__ = ["kNNMC"]
 
 
-class kNNKMC():
+class KMCkNN():
     """
     Locates a set of `K * k` nearest neighbors using Monte Carlo methods to
     incorporate measurement errors over `K` members of an ensemble.
@@ -39,7 +39,7 @@ class kNNKMC():
 
     K : int, optional
         The number of members used in the ensemble to incorporate errors using
-        Monte Carlo methods. Default is `25`.
+        Monte Carlo methods. Default is `50`.
 
     k : int, optional
         The number of nearest neighbors selected by each member. Default is
