@@ -6,3 +6,9 @@ Contributors:
 
 - [Boris Leistedt](https://github.com/ixkael)
 - [Ben Hoyle](http://www.usm.uni-muenchen.de/people/hoyleb)
+
+Feedback:
+
+- Alexie Leauthaud
+- [Hiranya Peiris](https://github.com/hiranyapeiris)
+- Daniel Mortlock
