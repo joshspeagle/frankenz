@@ -5,10 +5,10 @@ Author:
 Contributors:
 
 - [Boris Leistedt](https://github.com/ixkael)
-- [Ben Hoyle](http://www.usm.uni-muenchen.de/people/hoyleb)
 
 Feedback:
 
-- Alexie Leauthaud
+- [Ben Hoyle](https://github.com/hoyleb)
+- [Alexie Leauthaud](https://github.com/alexieleauthaud)
 - [Hiranya Peiris](https://github.com/hiranyapeiris)
 - Daniel Mortlock
