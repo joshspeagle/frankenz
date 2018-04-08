@@ -93,7 +93,8 @@ def mag_err(mag, maglim, sigdet=5., params=(4.56, 1., 1.)):
     return magerr
 
 
-def draw_mag(Nobj, pmag, pmag_kwargs=None, mbounds=(10, 28), Npoints=1000):
+def draw_mag(Nobj, pmag, rstate=None, pmag_kwargs=None, mbounds=(10, 28),
+             Npoints=1000):
     """
     Draw `Nobj` magnitudes from the P(mag) function :meth:`pmag`.
 
@@ -104,6 +105,10 @@ def draw_mag(Nobj, pmag, pmag_kwargs=None, mbounds=(10, 28), Npoints=1000):
 
     pmag : function
         The P(mag) function that magnitudes will be drawn from.
+
+    rstate : `~numpy.random.RandomState`, optional
+        `~numpy.random.RandomState` instance. If not given, the
+         global random state of the `~numpy.random` module will be used.
 
     pmag_kwargs : dict, optional
         Additional keyword arguments to be passed to :meth:`pmag`.
@@ -128,6 +133,8 @@ def draw_mag(Nobj, pmag, pmag_kwargs=None, mbounds=(10, 28), Npoints=1000):
     if mbounds[0] >= mbounds[1]:
         raise ValueError("The values {0} in `mbounds` are incorrectly "
                          "ordered.".format(mbounds))
+    if rstate is None:
+        rstate = np.random
 
     # Construct the CDF.
     mgrid = np.linspace(mbounds[0], mbounds[1], Npoints)  # compute mag grid
@@ -138,15 +145,16 @@ def draw_mag(Nobj, pmag, pmag_kwargs=None, mbounds=(10, 28), Npoints=1000):
     mgrid = np.append(mgrid[0] - lpad, mgrid)  # left pad x to match F(x)
 
     # Sample from the inverse CDF F^-1(x).
-    mags = np.interp(np.random.rand(Nobj), cdf_m, mgrid)
+    mags = np.interp(rstate.rand(Nobj), cdf_m, mgrid)
 
     return mags
 
 
-def draw_type_given_mag(p_type_given_mag, mags, Ntypes, ptm_kwargs=None):
+def draw_type_given_mag(p_type_given_mag, mags, Ntypes, rstate=None,
+                        ptm_kwargs=None):
     """
     Draw corresponding types from P(type | mag) using the
-    :meth:`p_type_given_mag` function.
+    :meth:`p_type_given_mag` function. Returns a generator.
 
     Parameters
     ----------
@@ -157,6 +165,13 @@ def draw_type_given_mag(p_type_given_mag, mags, Ntypes, ptm_kwargs=None):
 
     mags : iterable of shape (N,)
         Set of input magnitudes.
+
+    Ntypes : int
+        The number of types we can draw.
+
+    rstate : `~numpy.random.RandomState`, optional
+        `~numpy.random.RandomState` instance. If not given, the
+         global random state of the `~numpy.random` module will be used.
 
     ptm_kwargs : dict, optional
         Additional keyword arguments to be passed to :meth:`p_type_given_mag`.
@@ -171,23 +186,26 @@ def draw_type_given_mag(p_type_given_mag, mags, Ntypes, ptm_kwargs=None):
 
     if ptm_kwargs is None:
         ptm_kwargs = dict()
+    if rstate is None:
+        rstate = np.random
 
     # Draw types.
-    types = np.zeros(len(mags), dtype='int')
+    types = np.arange(-1, Ntypes)
     for i, m in enumerate(mags):
         prob = np.array([p_type_given_mag(t, m, **ptm_kwargs)
                          for t in range(Ntypes)])
-        prob /= prob.sum()
-        types[i] = np.random.choice(Ntypes, size=1, p=prob)
+        cdf = np.append(0., prob).cumsum()  # compute augmented CDF
+        cdf /= cdf[-1]  # normalize
+        draw = int(np.interp(rstate.rand(), cdf, types) + 1)  # index
+        yield draw  # pass back draw as a generator
 
-    return types
 
-
-def draw_redshift_given_type_mag(p_z_tm, types, mags, pztm_kwargs=None,
-                                 zbounds=(0, 15), Npoints=1000):
+def draw_redshift_given_type_mag(p_z_tm, types, mags, rstate=None,
+                                 pztm_kwargs=None, zbounds=(0, 15),
+                                 Npoints=1000):
     """
     Draw corresponding redshifts from P(z | type, mag) using the
-    :meth:`p_ztm` function.
+    :meth:`p_ztm` function. Returns a generator.
 
     Parameters
     ----------
@@ -200,6 +218,10 @@ def draw_redshift_given_type_mag(p_z_tm, types, mags, pztm_kwargs=None,
 
     mags : iterable of shape (N,)
         Set of input magnitudes.
+
+    rstate : `~numpy.random.RandomState`, optional
+        `~numpy.random.RandomState` instance. If not given, the
+         global random state of the `~numpy.random` module will be used.
 
     pztm_kwargs : dict, optional
         Additional keyword arguments to be passed to :meth:`p_ztm`.
@@ -224,6 +246,8 @@ def draw_redshift_given_type_mag(p_z_tm, types, mags, pztm_kwargs=None,
     if zbounds[0] >= zbounds[1]:
         raise ValueError("The values {0} in `zbounds` are incorrectly "
                          "ordered.".format(zbounds))
+    if rstate is None:
+        rstate = np.random
 
     # Compute the redshift grid.
     zgrid = np.linspace(zbounds[0], zbounds[1], Npoints)
@@ -231,8 +255,6 @@ def draw_redshift_given_type_mag(p_z_tm, types, mags, pztm_kwargs=None,
     zgrid2 = np.append(zgrid[0] - lpad, zgrid)  # zgrid with left padding
 
     # Draw redshifts.
-    Nobj = len(mags)
-    redshifts = np.empty(Nobj)
     for i, (t, m) in enumerate(zip(types, mags)):
 
         # Compute PDF.
@@ -242,14 +264,13 @@ def draw_redshift_given_type_mag(p_z_tm, types, mags, pztm_kwargs=None,
             pdf_z = np.array([p_z_tm(z=z, t=t, m=m, **pztm_kwargs)
                               for z in zgrid])
 
-        # Compute CDF.
+        # Compute (augmented) CDF.
         cdf_z = pdf_z.cumsum()
         cdf_z = np.append(0, cdf_z) / cdf_z[-1]  # left pad and normalize
 
         # Draw redshift from inverse CDF F^-1(x).
-        redshifts[i] = np.interp(np.random.rand(), cdf_z, zgrid2)
-
-    return redshifts
+        redshift = max(0., np.interp(rstate.rand(), cdf_z, zgrid2))
+        yield redshift
 
 
 def draw_ztm(pmag, p_tm, p_ztm, Nobj, pm_kwargs=None, ptm_kwargs=None,
@@ -308,12 +329,24 @@ def draw_ztm(pmag, p_tm, p_ztm, Nobj, pm_kwargs=None, ptm_kwargs=None,
 
     """
 
+    # Draw magnitudes.
+    mags = np.zeros(Nobj, dtype='float')
     mags = draw_mag(Nobj, pmag, pmag_kwargs=pm_kwargs, mbounds=mbounds,
                     Npoints=Npoints)
-    types = draw_type_given_mag(p_tm, mags, ptm_kwargs=None)
-    redshifts = draw_redshift_given_type_mag(p_ztm, types, mags,
-                                             pztm_kwargs=pztm_kwargs,
-                                             zbounds=zbounds, Npoints=Npoints)
+
+    # Draw types.
+    types = np.zeros(Nobj, dtype='int')
+    for i, t in enumerate(draw_type_given_mag(p_tm, mags,
+                          ptm_kwargs=ptm_kwargs)):
+        types[i] = t
+
+    # Draw redshifts.
+    redshifts = np.zeros(Nobj, dtype='float')
+    for i, z in enumerate(draw_redshift_given_type_mag(p_ztm, types, mags,
+                                                       pztm_kwargs=pztm_kwargs,
+                                                       zbounds=zbounds,
+                                                       Npoints=Npoints)):
+        redshifts[i] = z
 
     return mags, types, redshifts
 
@@ -350,17 +383,19 @@ class MockSurvey(object):
         If a string provided, will initialize the `MockSurvey` using a preset
         P(z, type, mag) prior. Otherwise, if a tuple containing P(mag),
         P(type | mag), and P(z | type, mag) functions of the form
-        `(p_m, p_tm, p_ztm)` is provided, those will be initialized instead.
-        Current presets include:
+        `(p_m, p_tm, p_ztm)` is provided, those functions will be initialized
+        instead. Current presets include:
 
         * The Bayesian Photo-Z (BPZ) prior described in Benitez (2000)
           (`'bpz'`).
 
-        Note that `'bpz'` is not valid for the `'brown'` set of templates.
+    rstate : `~numpy.random.RandomState`, optional
+        `~numpy.random.RandomState` instance. If not given, the
+         global random state of the `~numpy.random` module will be used.
 
     """
 
-    def __init__(self, survey=None, templates=None, prior=None):
+    def __init__(self, survey=None, templates=None, prior=None, rstate=None):
 
         # filters
         self.filters = None
@@ -402,6 +437,9 @@ class MockSurvey(object):
             else:
                 raise ValueError("{0} does not appear to be valid prior "
                                  "preset.".format(prior))
+
+        if rstate is None:
+            self.rstate = np.random
 
     def load_survey(self, filter_list, path='', Npoints=5e4):
         """
@@ -587,7 +625,7 @@ class MockSurvey(object):
                                  "filters.".format(ref, mode))
             self.ref_filter = np.arange(self.NFILTER)[sel][0]
 
-    def sample_params(self, Nobj, mbounds=None, zbounds=(0, 15),
+    def sample_params(self, Nobj, rstate=None, mbounds=None, zbounds=(0, 15),
                       Nm=1000, Nz=1000, pm_kwargs=None, ptm_kwargs=None,
                       pztm_kwargs=None, verbose=True):
         """
@@ -603,6 +641,11 @@ class MockSurvey(object):
             The minimum/maximum magnitude allowed. Default is `(10,
             maglim + 2.5 * np.log10(5))` where `maglim` is the 5-sigma limiting
             magnitude in the reference filter.
+
+        rstate : `~numpy.random.RandomState`, optional
+            `~numpy.random.RandomState` instance. If not given, the
+             random state used to initialize the `MockSurvey` object will be
+             used.
 
         zbounds : tuple of length 2, optional
             The minimum/maximum redshift allowed. Default is `(0, 10)`.
@@ -637,6 +680,8 @@ class MockSurvey(object):
             ptm_kwargs = dict()
         if pztm_kwargs is None:
             pztm_kwargs = dict()
+        if rstate is None:
+            rstate = self.rstate
 
         maglim = pm_kwargs.get('maglim',
                                self.filters[self.ref_filter]['depth_mag5sig'])
@@ -646,21 +691,29 @@ class MockSurvey(object):
 
         # Sample magnitudes.
         if verbose:
-            sys.stderr.write('Sampling mags...')
+            sys.stderr.write('Sampling mags: ')
             sys.stderr.flush()
-        mags = draw_mag(Nobj, self.pm, pmag_kwargs=pm_kwargs,
+        mags = np.zeros(Nobj, dtype='float')
+        mags = draw_mag(Nobj, self.pm, pmag_kwargs=pm_kwargs, rstate=rstate,
                         mbounds=mbounds, Npoints=Nm)  # sample magnitudes
         if verbose:
-            sys.stderr.write('done! ')
+            sys.stderr.write('{0}/{1}'.format(Nobj, Nobj))
             sys.stderr.flush()
 
         # Sample types.
         if verbose:
-            sys.stderr.write('Sampling types/templates...')
+            sys.stderr.write('\n')
             sys.stderr.flush()
-
-        types = draw_type_given_mag(self.ptm, mags, self.NTYPE,
-                                    ptm_kwargs=ptm_kwargs)
+        types = np.zeros(Nobj, dtype='int')
+        generator = draw_type_given_mag  # alias for generator
+        for i, t in enumerate(generator(self.ptm, mags, self.NTYPE,
+                                        ptm_kwargs=ptm_kwargs,
+                                        rstate=rstate)):
+            types[i] = t  # assign type draw
+            if verbose:
+                sys.stderr.write('\rSampling types: {0}/{1}'
+                                 .format(i+1, Nobj))
+                sys.stderr.flush()
 
         # Re-label templates by type and construct probability vectors.
         tmp_types = np.array([tmp['type'] for tmp in self.templates])
@@ -669,24 +722,35 @@ class MockSurvey(object):
 
         # Sample templates from types.
         templates = np.empty(Nobj, dtype='int')
+        if verbose:
+            sys.stderr.write('\n')
+            sys.stderr.flush()
         for i in range(self.NTYPE):
             n = int(sum(types == i))  # number of objects of a given type
-            templates[types == i] = np.random.choice(self.NTEMPLATE, size=n,
-                                                     p=tmp_p[i])
-
-        if verbose:
-            sys.stderr.write('done! ')
-            sys.stderr.flush()
+            templates[types == i] = rstate.choice(self.NTEMPLATE, size=n,
+                                                  p=tmp_p[i])
+            if verbose:
+                sys.stderr.write('\rSampling templates within each type: {0}/{1}'
+                                 .format(i+1, self.NTYPE))
+                sys.stderr.flush()
 
         # Sample redshifts.
         if verbose:
-            sys.stderr.write('Sampling redshifts...')
+            sys.stderr.write('\n')
             sys.stderr.flush()
-        redshifts = draw_redshift_given_type_mag(self.pztm, types, mags,
-                                                 pztm_kwargs=pztm_kwargs,
-                                                 zbounds=zbounds, Npoints=Nz)
+        redshifts = np.zeros(Nobj, dtype='float')
+        generator = draw_redshift_given_type_mag
+        for i, z in enumerate(generator(self.pztm, types, mags,
+                                        pztm_kwargs=pztm_kwargs,
+                                        zbounds=zbounds, Npoints=Nz,
+                                        rstate=rstate)):
+            redshifts[i] = z  # assign redshift draw
+            if verbose:
+                sys.stderr.write('\rSampling redshifts: {0}/{1}'
+                                 .format(i+1, Nobj))
+                sys.stderr.flush()
         if verbose:
-            sys.stderr.write('done!\n')
+            sys.stderr.write('\n')
             sys.stderr.flush()
 
         # Save data.
@@ -694,7 +758,8 @@ class MockSurvey(object):
                      'templates': templates, 'redshifts': redshifts}
         self.NOBJ = Nobj
 
-    def sample_phot(self, red_fn='madau+99', rnoise_fn=None, verbose=True):
+    def sample_phot(self, red_fn='madau+99', rnoise_fn=None, rstate=None,
+                    verbose=True):
         """
         Generate noisy photometry from `(t, z, m)` samples. **Note that this
         ignores Poisson noise**. Results are added internally to `data`.
@@ -712,10 +777,18 @@ class MockSurvey(object):
             provided survey depths) and jitters them to mimic spatial
             background variation.
 
+        rstate : `~numpy.random.RandomState`, optional
+            `~numpy.random.RandomState` instance. If not given, the
+             random state used to initialize the `MockSurvey` object will be
+             used.
+
         verbose : bool, optional
             Whether to print progress to `~sys.stderr`. Default is `True`.
 
         """
+
+        if rstate is None:
+            rstate = self.rstate
 
         # Grab data.
         try:
@@ -742,9 +815,6 @@ class MockSurvey(object):
         tfnu = [t['fnu'] for t in self.templates]
 
         # Compute unnormalized photometry.
-        if verbose:
-            sys.stderr.write('Generating photometry...')
-            sys.stderr.flush()
 
         phot = np.zeros((self.NOBJ, self.NFILTER))  # photometry array
         for i, (t, z) in enumerate(zip(templates, redshifts)):
@@ -762,6 +832,10 @@ class MockSurvey(object):
                        for f_t, f_nu, f_lw, f_n, te in zip(filt_t, filt_nu,
                                                            flw, norm,
                                                            igm_teff)]
+            if verbose:
+                sys.stderr.write('\rGenerating photometry: {0}/{1}'
+                                 .format(i+1, self.NOBJ))
+                sys.stderr.flush()
 
         # Normalize photometry to reference magnitude.
         with warnings.catch_warnings():
@@ -775,29 +849,25 @@ class MockSurvey(object):
         self.data['refmags'][sel_badphot] = np.inf  # fix magnitudes
         phot[sel_badphot] = -np.inf  # fix fluxes
 
-        if verbose:
-            sys.stderr.write('done! ')
-            sys.stderr.flush()
-
         # Compute errors.
         if verbose:
-            sys.stderr.write('Sampling errors...')
+            sys.stderr.write('\nSampling errors: ')
             sys.stderr.flush()
         fnoise = np.array([np.ones(self.NOBJ) * f['depth_flux1sig']
                            for f in self.filters]).T
         if rnoise_fn is not None:
-            fnoise = rnoise_fn(fnoise)  # add some additional randomness
+            fnoise = rnoise_fn(fnoise, rstate=rstate)  # add noise variability
         if verbose:
-            sys.stderr.write('done! ')
+            sys.stderr.write('{0}/{1}'.format(self.NOBJ, self.NOBJ))
             sys.stderr.flush()
 
         # Jittering fluxes.
         if verbose:
-            sys.stderr.write('Sampling photometry...')
+            sys.stderr.write('\nSampling photometry: ')
             sys.stderr.flush()
-        phot_obs = np.random.normal(phot, fnoise)
+        phot_obs = rstate.normal(phot, fnoise)
         if verbose:
-            sys.stderr.write('done!\n')
+            sys.stderr.write('{0}/{1}\n'.format(self.NOBJ, self.NOBJ))
             sys.stderr.flush()
 
         # Save results.
@@ -808,7 +878,7 @@ class MockSurvey(object):
     def make_mock(self, Nobj, mbounds=None, zbounds=(0, 15),
                   Nm=1000, Nz=1000, pm_kwargs=None, ptm_kwargs=None,
                   pztm_kwargs=None, red_fn='madau+99', rnoise_fn=None,
-                  verbose=True):
+                  rstate=None, verbose=True):
         """
 
         Generate (noisy) photometry for `Nobj` objects sampled from the
@@ -859,6 +929,11 @@ class MockSurvey(object):
             provided survey depths) and jitters them to mimic spatial
             background variation.
 
+        rstate : `~numpy.random.RandomState`, optional
+            `~numpy.random.RandomState` instance. If not given, the
+             random state used to initialize the `MockSurvey` object will be
+             used.
+
         verbose : bool, optional
             Whether to print progress to `~sys.stderr`. Default is `True`.
 
@@ -866,12 +941,13 @@ class MockSurvey(object):
 
         # Sample parameters.
         self.sample_params(Nobj, mbounds=mbounds, zbounds=zbounds,
-                           Nm=Nm, Nz=Nz, pm_kwargs=pm_kwargs,
+                           Nm=Nm, Nz=Nz, pm_kwargs=pm_kwargs, rstate=rstate,
                            ptm_kwargs=ptm_kwargs, pztm_kwargs=pztm_kwargs,
                            verbose=verbose)
 
         # Sample photometry.
-        self.sample_phot(red_fn=red_fn, rnoise_fn=rnoise_fn, verbose=verbose)
+        self.sample_phot(red_fn=red_fn, rnoise_fn=rnoise_fn,
+                         rstate=rstate, verbose=verbose)
 
     def make_model_grid(self, redshifts, red_fn='madau+99', verbose=True):
         """
@@ -914,10 +990,6 @@ class MockSurvey(object):
         tfnu = [t['fnu'] for t in self.templates]
 
         # Compute unnormalized photometry.
-        if verbose:
-            sys.stderr.write('Generating photometry...')
-            sys.stderr.flush()
-
         phot = np.zeros((Nz, self.NTEMPLATE, self.NFILTER))
         for i, z in enumerate(redshifts):
             for j in range(self.NTEMPLATE):
@@ -938,10 +1010,10 @@ class MockSurvey(object):
                                                                   filt_nu,
                                                                   flw, norm,
                                                                   igm_teff)]
-
-        if verbose:
-            sys.stderr.write('done!\n')
-            sys.stderr.flush()
+            if verbose:
+                sys.stderr.write('\rGenerating model photometry grid: {0}/{1}'
+                                 .format(i+1, len(redshifts)))
+                sys.stderr.flush()
 
         # Save results.
         self.models = {'data': phot, 'zgrid': redshifts}
