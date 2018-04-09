@@ -25,7 +25,7 @@ bpz_pztm = None
 
 
 def pmag(mag, maglim, mbounds=(10., 28.), alpha=15., beta=2., gamma=1.,
-         Npoints=1000):
+         Npoints=1000, *args, **kwargs):
     """
     Function that returns P(mag) given an input magnitude limit `maglim` as::
 
@@ -73,7 +73,7 @@ def pmag(mag, maglim, mbounds=(10., 28.), alpha=15., beta=2., gamma=1.,
     return pm
 
 
-def _bpz_prior(m, zgrid, mbounds=(20, 32), zbounds=(0, 15)):
+def _bpz_prior(m, zgrid, mbounds=(20, 32), zbounds=(0, 15), *args, **kwargs):
     """
     Internal function used to generate the BPZ prior P(t | m, z).
 
@@ -133,7 +133,7 @@ def _bpz_prior(m, zgrid, mbounds=(20, 32), zbounds=(0, 15)):
     return p_i, f_t
 
 
-def bpz_pt_m(t, m, mbounds=(20, 32), bpz_ptm_func=None):
+def bpz_pt_m(t, m, mbounds=(20, 32), bpz_ptm_func=None, *args, **kwargs):
     """
     BPZ conditional prior for P(t | m).
 
@@ -180,7 +180,8 @@ def bpz_pt_m(t, m, mbounds=(20, 32), bpz_ptm_func=None):
     return bpz_ptm_func((np.clip(m, mbounds[0], mbounds[1]), t))
 
 
-def bpz_pz_tm(z, t, m, mbounds=(20, 32), zbounds=(0, 15), bpz_pztm_func=None):
+def bpz_pz_tm(z, t, m, mbounds=(20, 32), zbounds=(0, 15), bpz_pztm_func=None,
+              *args, **kwargs):
     """
     BPZ conditional prior for P(z | t, m).
 

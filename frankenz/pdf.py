@@ -25,7 +25,7 @@ __all__ = ["_loglike", "_loglike_s", "loglike",
 
 
 def _loglike(data, data_err, data_mask, models, models_err, models_mask,
-             ignore_model_err=False, dim_prior=True):
+             ignore_model_err=False, dim_prior=True, *args, **kwargs):
     """
     Internal function for computing the log-likelihood between noisy
     data and noisy models.
@@ -101,7 +101,7 @@ def _loglike(data, data_err, data_mask, models, models_err, models_mask,
 
 def _loglike_s(data, data_err, data_mask, models, models_err, models_mask,
                ignore_model_err=False, dim_prior=True, ltol=1e-4,
-               return_scale=False):
+               return_scale=False, *args, **kwargs):
     """
     Internal function for computing the log-likelihood between noisy
     data and noisy models while allowing the model to be rescaled.
@@ -232,20 +232,20 @@ def _loglike_s(data, data_err, data_mask, models, models_err, models_mask,
 
 def loglike(data, data_err, data_mask, models, models_err, models_mask,
             free_scale=False, ignore_model_err=False, dim_prior=True,
-            ltol=1e-4, return_scale=False):
+            ltol=1e-4, return_scale=False, *args, **kwargs):
     """
     Compute the ln(likelihood) between an input set of data vectors and an
     input set of (scale-free and/or error-free) model vectors.
 
     Parameters
     ----------
-    data : `~numpy.ndarray` of shape (Nobj, Nfilt)
+    data : `~numpy.ndarray` of shape (Nfilt)
         Observed data values.
 
-    data_err : `~numpy.ndarray` of shape (Nobj, Nfilt)
+    data_err : `~numpy.ndarray` of shape (Nfilt)
         Associated (Normal) errors on the observed values.
 
-    data_mask : `~numpy.ndarray` of shape (Nobj, Nfilt)
+    data_mask : `~numpy.ndarray` of shape (Nfilt)
         Binary mask (0/1) indicating whether the data was observed.
 
     models : `~numpy.ndarray` of shape (Nmodel, Nfilt)
@@ -282,13 +282,16 @@ def loglike(data, data_err, data_mask, models, models_err, models_mask,
 
     Returns
     -------
-    lnlike : `~numpy.ndarray` of shape (Nobj, Nmodel)
+    lnlike : `~numpy.ndarray` of shape (Nmodel)
         Log-likelihood values.
 
-    Ndim : `~numpy.ndarray` of shape (Nobj, Nmodel)
+    Ndim : `~numpy.ndarray` of shape (Nmodel)
         Number of observations used in the fit (dimensionality).
 
-    scale : `~numpy.ndarray` of shape (Nobj, Nmodel), optional
+    chi2 : `~numpy.ndarray` of shape (Nmodel)
+        Chi-square values used to compute the log-likelihood.
+
+    scale : `~numpy.ndarray` of shape (Nmodel), optional
         The factor used to scale the model observations to the observed data.
         Returned if `return_scale = True`.
 
@@ -337,7 +340,8 @@ def gaussian_bin(mu, std, bins):
     return pdf
 
 
-def gauss_kde(y, y_std, x, dx=None, y_wt=None, sig_thresh=5., wt_thresh=1e-3):
+def gauss_kde(y, y_std, x, dx=None, y_wt=None, sig_thresh=5., wt_thresh=1e-3,
+              *args, **kwargs):
     """
     Compute smoothed PDF using kernel density estimation.
 
@@ -407,7 +411,7 @@ def gauss_kde(y, y_std, x, dx=None, y_wt=None, sig_thresh=5., wt_thresh=1e-3):
 
 
 def gauss_kde_dict(pdfdict, y=None, y_std=None, y_idx=None, y_std_idx=None,
-                   y_wt=None, wt_thresh=1e-3):
+                   y_wt=None, wt_thresh=1e-3, *args, **kwargs):
     """
     Compute smoothed PDF using kernel density estimation based on a
     pre-computed dictionary and pre-defined grid.

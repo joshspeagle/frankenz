@@ -560,6 +560,8 @@ class MockSurvey(object):
             self.TYPES = np.arange(self.NTEMPLATE).astype('str')
             self.TYPE_COUNTS = np.ones(self.NTEMPLATE)
         self.NTYPE = len(self.TYPES)
+        self.TTYPE = np.array([np.arange(self.NTYPE)[t['type'] == self.TYPES]
+                               for t in self.templates], dtype='int').flatten()
 
         # Extract templates.
         for fpath, tmp in zip(template_paths, self.templates):
@@ -730,8 +732,8 @@ class MockSurvey(object):
             templates[types == i] = rstate.choice(self.NTEMPLATE, size=n,
                                                   p=tmp_p[i])
             if verbose:
-                sys.stderr.write('\rSampling templates within each type: {0}/{1}'
-                                 .format(i+1, self.NTYPE))
+                sys.stderr.write('\rSampling templates within each type: '
+                                 '{0}/{1}'.format(i+1, self.NTYPE))
                 sys.stderr.flush()
 
         # Sample redshifts.
