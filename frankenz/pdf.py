@@ -20,7 +20,7 @@ from scipy.special import erf
 
 __all__ = ["_loglike", "_loglike_s", "loglike",
            "gaussian", "gaussian_bin", "gauss_kde", "gauss_kde_dict",
-           "asinh_mag", "inv_asinh_mag",
+           "magnitude", "inv_magnitude", "luptitude", "inv_luptitude",
            "PDFDict"]
 
 
@@ -490,9 +490,79 @@ def gauss_kde_dict(pdfdict, y=None, y_std=None, y_idx=None, y_std_idx=None,
     return pdf
 
 
-def asinh_mag(phot, err, skynoise=1., zeropoints=1.):
+def magnitude(phot, err, zeropoints=1., *args, **kwargs):
     """
-    Concert photometry to asinh magnitudes (i.e. "Luptitudes"). See Lupton et
+    Convert photometry to AB magnitudes.
+
+    Parameters
+    ----------
+    phot : `~numpy.ndarray` with shape (Nobs, Nfilt)
+        Observed photometric flux densities.
+
+    err : `~numpy.ndarray` with shape (Nobs, Nfilt)
+        Observed photometric flux density errors.
+
+    zeropoints : float or `~numpy.ndarray` with shape (Nfilt,)
+        Flux density zero-points. Used as a "location parameter".
+        Default is `1.`.
+
+    Returns
+    -------
+    mag : `~numpy.ndarray` with shape (Nobs, Nfilt)
+        Magnitudes corresponding to input `phot`.
+
+    mag_err : `~numpy.ndarray` with shape (Nobs, Nfilt)
+        Magnitudes errors corresponding to input `err`.
+
+    """
+
+    # Compute magnitudes.
+    mag = -2.5 * np.log10(phot / zeropoints)
+
+    # Compute errors.
+    mag_err = 2.5 / np.log(10.) * err / phot
+
+    return mag, mag_err
+
+
+def inv_magnitude(mag, err, zeropoints=1., *args, **kwargs):
+    """
+    Convert AB magnitudes to photometry.
+
+    Parameters
+    ----------
+    mag : `~numpy.ndarray` with shape (Nobs, Nfilt)
+        Magnitudes.
+
+    err : `~numpy.ndarray` with shape (Nobs, Nfilt)
+        Magnitude errors.
+
+    zeropoints : float or `~numpy.ndarray` with shape (Nfilt,)
+        Flux density zero-points. Used as a "location parameter".
+        Default is `1.`.
+
+    Returns
+    -------
+    phot : `~numpy.ndarray` with shape (Nobs, Nfilt)
+        Photometric flux densities corresponding to input `mag`.
+
+    phot_err : `~numpy.ndarray` with shape (Nobs, Nfilt)
+        Photometric errors corresponding to input `err`.
+
+    """
+
+    # Compute magnitudes.
+    phot = 10**(-0.4 * mag) * zeropoints
+
+    # Compute errors.
+    phot_err = err * 0.4 * np.log(10.) * phot
+
+    return phot, phot_err
+
+
+def luptitude(phot, err, skynoise=1., zeropoints=1., *args, **kwargs):
+    """
+    Convert photometry to asinh magnitudes (i.e. "Luptitudes"). See Lupton et
     al. (1999) for more details.
 
     Parameters
@@ -532,9 +602,9 @@ def asinh_mag(phot, err, skynoise=1., zeropoints=1.):
     return mag, mag_err
 
 
-def inv_asinh_mag(mag, err, skynoise=1., zeropoints=1.):
+def inv_luptitude(mag, err, skynoise=1., zeropoints=1., *args, **kwargs):
     """
-    Concert asinh magnitudes to photometry.
+    Convert asinh magnitudes ("Luptitudes") to photometry.
 
     Parameters
     ----------
@@ -559,6 +629,7 @@ def inv_asinh_mag(mag, err, skynoise=1., zeropoints=1.):
 
     phot_err : `~numpy.ndarray` with shape (Nobs, Nfilt)
         Photometric errors corresponding to input `err`.
+
     """
 
     # Compute photometry.

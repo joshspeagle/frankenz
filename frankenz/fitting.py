@@ -26,12 +26,12 @@ try:
 except ImportError:
     from scipy.misc import logsumexp
 
-__all__ = ["BruteForce", "KMCkNN"]
+__all__ = ["BruteForce", "NearestNeighbors"]
 
 
 class BruteForce():
     """
-    Fits all input data using a simple brute-force approach.
+    Fits data and generates predictions using a simple brute-force approach.
 
     """
 
@@ -66,7 +66,7 @@ class BruteForce():
         self.NMODEL, self.NDIM = models.shape
 
     def fit(self, data, data_err, data_mask, lprob_func,
-            lprob_args=None, lprob_kwargs=None, return_scale=False,
+            lprob_args=None, lprob_kwargs=None, track_scale=False,
             verbose=True):
         """
         Fit all input models to the input data to compute the associated
@@ -93,7 +93,7 @@ class BruteForce():
         lprob_kwargs : kwargs, optional
             Keyword arguments to be passed to `lprob_func`.
 
-        return_scale : bool, optional
+        track_scale : bool, optional
             Whether `lprob_func` also returns the scale-factor. Default is
             `False`.
 
@@ -102,6 +102,7 @@ class BruteForce():
 
         """
 
+        # Initialize values.
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
@@ -113,7 +114,7 @@ class BruteForce():
                                               lprob_func,
                                               lprob_args=lprob_args,
                                               lprob_kwargs=lprob_kwargs,
-                                              return_scale=return_scale)):
+                                              track_scale=track_scale)):
             if verbose:
                 sys.stderr.write('\rFitting object {0}/{1}'.format(i+1, Ndata))
                 sys.stderr.flush()
@@ -122,7 +123,7 @@ class BruteForce():
             sys.stderr.flush()
 
     def _fit(self, data, data_err, data_mask, lprob_func,
-             lprob_args=None, lprob_kwargs=None, return_scale=False):
+             lprob_args=None, lprob_kwargs=None, track_scale=False):
         """
         Internal generator used to compute fits.
 
@@ -147,18 +148,18 @@ class BruteForce():
         lprob_kwargs : kwargs, optional
             Keyword arguments to be passed to `lprob_func`.
 
-        return_scale : bool, optional
+        track_scale : bool, optional
             Whether `lprob_func` also returns the scale-factor. Default is
             `False`.
 
         """
 
+        # Initialize values.
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
             lprob_kwargs = dict()
 
-        # Initialize values.
         Ndata = len(data)
         Nmodels = self.NMODEL
         self.NDATA = Ndata
@@ -169,6 +170,7 @@ class BruteForce():
         self.fit_chi2 = np.zeros((Ndata, Nmodels), dtype='float')
         self.fit_scale = np.ones((Ndata, Nmodels), dtype='float')
 
+        # Fit data.
         for i, (x, xe, xm) in enumerate(zip(data, data_err, data_mask)):
             results = lprob_func(x, xe, xm, self.models, self.models_err,
                                  self.models_mask, *lprob_args, **lprob_kwargs)
@@ -177,7 +179,7 @@ class BruteForce():
             self.fit_lnprob[i] = results[2]  # ln(prob)
             self.fit_Ndim[i] = results[3]  # dimensionality of fit
             self.fit_chi2[i] = results[4]  # chi2
-            if return_scale:
+            if track_scale:
                 self.fit_scale[i] = results[5]  # scale-factor
 
             yield results
@@ -304,6 +306,7 @@ class BruteForce():
 
         """
 
+        # Initialize values.
         if kde_args is None:
             kde_args = []
         if kde_kwargs is None:
@@ -313,7 +316,9 @@ class BruteForce():
         if label_dict is None and label_grid is None:
             raise ValueError("`label_dict` or `label_grid` must be specified.")
 
+        # Generate PDFs.
         if label_dict is not None:
+            # Use dictionary if available.
             for i, lwt in enumerate(logwt):
                 lmap, levid = max(lwt), logsumexp(lwt)
                 wt = np.exp(lwt - levid)
@@ -322,6 +327,7 @@ class BruteForce():
                                      *kde_args, **kde_kwargs)
                 yield pdf, (lmap, levid)
         else:
+            # Otherwise just use KDE.
             for i, lwt in enumerate(logwt):
                 lmap, levid = max(lwt), logsumexp(lwt)
                 wt = np.exp(lwt - levid)
@@ -331,12 +337,12 @@ class BruteForce():
 
     def fit_predict(self, data, data_err, data_mask, lprob_func,
                     model_labels, model_label_errs, label_dict=None,
-                    label_grid=None, kde_args=None, kde_kwargs=None, 
+                    label_grid=None, kde_args=None, kde_kwargs=None,
                     lprob_args=None, lprob_kwargs=None, return_gof=False,
-                    return_scale=False, verbose=True, save_fits=True):
+                    track_scale=False, verbose=True, save_fits=True):
         """
         Fit all input models to the input data to compute the associated
-        log-posteriors.
+        log-posteriors and 1-D predictions.
 
         Parameters
         ----------
@@ -385,7 +391,7 @@ class BruteForce():
             ln(evidence) values for the predictions
             along with the pdfs. Default is `False`.
 
-        return_scale : bool, optional
+        track_scale : bool, optional
             Whether `lprob_func` also returns the scale-factor. Default is
             `False`.
 
@@ -398,6 +404,7 @@ class BruteForce():
 
         """
 
+        # Initialize values.
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
@@ -418,21 +425,22 @@ class BruteForce():
             lmap = np.zeros(Ndata)
             levid = np.zeros(Ndata)
 
+        # Generate predictions.
         for i, res in enumerate(self._fit_predict(data, data_err, data_mask,
-                                                 lprob_func, model_labels,
-                                                 model_label_errs,
-                                                 label_dict=label_dict,
-                                                 label_grid=label_grid,
-                                                 kde_args=kde_args,
-                                                 kde_kwargs=kde_kwargs, 
-                                                 lprob_args=lprob_args,
-                                                 lprob_kwargs=lprob_kwargs,
-                                                 return_scale=return_scale,
-                                                 save_fits=save_fits)):
+                                                  lprob_func, model_labels,
+                                                  model_label_errs,
+                                                  label_dict=label_dict,
+                                                  label_grid=label_grid,
+                                                  kde_args=kde_args,
+                                                  kde_kwargs=kde_kwargs,
+                                                  lprob_args=lprob_args,
+                                                  lprob_kwargs=lprob_kwargs,
+                                                  track_scale=track_scale,
+                                                  save_fits=save_fits)):
             pdf, gof = res
             pdfs[i] = pdf
             if return_gof:
-                lmap[i], levid[i] = gof
+                lmap[i], levid[i] = gof  # save gof metrics
             if verbose:
                 sys.stderr.write('\rGenerating PDF {0}/{1}'
                                  .format(i+1, Ndata))
@@ -448,9 +456,9 @@ class BruteForce():
 
     def _fit_predict(self, data, data_err, data_mask, lprob_func,
                      model_labels, model_label_errs, label_dict=None,
-                     label_grid=None, kde_args=None, kde_kwargs=None, 
+                     label_grid=None, kde_args=None, kde_kwargs=None,
                      lprob_args=None, lprob_kwargs=None,
-                     return_scale=False, save_fits=True):
+                     track_scale=False, save_fits=True):
         """
         Internal generator used to fit and compute predictions.
 
@@ -496,7 +504,7 @@ class BruteForce():
         lprob_kwargs : kwargs, optional
             Keyword arguments to be passed to `lprob_func`.
 
-        return_scale : bool, optional
+        track_scale : bool, optional
             Whether `lprob_func` also returns the scale-factor. Default is
             `False`.
 
@@ -540,11 +548,11 @@ class BruteForce():
                 self.fit_lnprob[i] = results[2]  # ln(prob)
                 self.fit_Ndim[i] = results[3]  # dimensionality of fit
                 self.fit_chi2[i] = results[4]  # chi2
-                if return_scale:
+                if track_scale:
                     self.fit_scale[i] = results[5]  # scale-factor
             lnprob = results[2]
 
-            # Compute PDF.
+            # Compute PDF and GOF metrics.
             lmap, levid = max(lnprob), logsumexp(lnprob)
             wt = np.exp(lnprob - levid)
             if label_dict is not None:
@@ -559,156 +567,777 @@ class BruteForce():
                 yield pdf, (lmap, levid)
 
 
-class KMCkNN():
+class NearestNeighbors():
     """
-    Locates a set of `K * k` nearest neighbors using Monte Carlo methods to
-    incorporate measurement errors over `K` members of an ensemble.
-    Wraps `~scipy.spatial.KDTree`. Note that trees are only trained when
-    searching for neighbors to save memory.
-
-    Parameters
-    ----------
-    leafsize : int, optional
-        The number of points where the algorithm switches over to brute force.
-        Default is `100`.
-
-    K : int, optional
-        The number of members used in the ensemble to incorporate errors using
-        Monte Carlo methods. Default is `50`.
-
-    k : int, optional
-        The number of nearest neighbors selected by each member. Default is
-        `20`.
-
-    eps : float, optional
-        If supplied, approximate (rather than exact) nearest neighbor queries
-        are returned where the `k`th neighbor is guaranteed to be no further
-        than `(1 + eps)` times the distance to the *real* `k`th nearest
-        neighbor. Default is `1e-3`.
-
-    p : float, optional
-        The Minkowski p-norm that should be used to compute distances. Default
-        is `2` (i.e. the Euclidean distance).
-
-    distance_upper_bound : float, optional
-        If supplied, return only neighbors within this distance. Default is
-        `np.inf`.
+    Fits data and generates predictions using a Bayesian-based nearest-neighbor
+    approach.
 
     """
 
-    def __init__(self, leafsize=100, K=25, k=20, eps=1e-3, p=2,
-                 distance_upper_bound=np.inf):
-        # Initialize values.
-        self.leafsize = leafsize
-        self.K = K
-        self.k = k
-        self.eps = eps
-        self.p = p
-        self.dbound = distance_upper_bound
-
-    def query(self, X_train, Xe_train, X_targ, Xe_targ,
-              feature_map='asinh_mag', rstate=None):
+    def __init__(self, models, models_err, models_mask, leafsize=50, K=25,
+                 feature_map='luptitude', fmap_args=None, fmap_kwargs=None,
+                 rstate=None, verbose=True):
         """
-        Find (at most) `K * k` unique neighbors for each training object.
+        Load the model data into memory and initialize trees to facilitate
+        nearest-neighbor searches.
 
         Parameters
         ----------
-        X_train : `~numpy.ndarray` with shape (Ntrain, Nfilt,)
-            Training features.
+        models : `~numpy.ndarray` of shape (Nmodel, Nfilt)
+            Model values.
 
-        Xe_train : `~numpy.ndarray` with shape (Ntrain, Nfilt,)
-            Training feature errors.
+        models_err : `~numpy.ndarray` of shape (Nmodel, Nfilt)
+            Associated errors on the model values.
 
-        X_targ : `~numpy.ndarray` with shape (Ntest, Nfilt,)
-            Target features.
+        models_mask : `~numpy.ndarray` of shape (Nmodel, Nfilt)
+            Binary mask (0/1) indicating whether the model value was observed.
 
-        Xe_targ : `~numpy.ndarray` with shape (Ntest, Nfilt,)
-            Target feature errors.
+        leafsize : int, optional
+            The number of points where the algorithm switches over
+            to brute force. Default is `50`.
+
+        K : int, optional
+            The number of members used in the ensemble to incorporate
+            errors using Monte Carlo methods. Default is `25`.
 
         feature_map : str or function, optional
             Function that transforms the input set of features/errors `X, Xe`
             to a new set of features/errors `Y, Ye` to facilitate nearest
-            neighbor searches. Built-in options are `None` (the identity
-            function) and `'asinh_mag'` (asinh magnitudes).
-            Default is `'asinh_mag'`.
+            neighbor searches. Built-in options are `'identity'` (the identity
+            function), `'magnitude'` (log10-based magnitudes),
+            and `'luptitude'` (asinh-based magnitudes).
+            Default is `'luptitude'`.
+
+        fmap_args : args, optional
+            Arguments to be passed to `feature_map`.
+
+        fmap_kwargs : kwargs, optional
+            Keyword arguments to be passed to `feature_map`.
 
         rstate : `~numpy.random.RandomState` instance, optional
             Random state instance. If not passed, the default `~numpy.random`
             instance will be used.
 
-        Returns
-        -------
-        idxs :  `~numpy.ndarray` with shape (Ntest, M*k,)
-            Indices for each target object corresponding to the associated
-            `K * k` neighbors among the training objects.
-
-        Nidxs : `~numpy.ndarray` with shape (Ntest,)
-            Number of unique indices for each target object.
+        verbose : bool, optional
+            Whether to print progress to `~sys.stderr`. Default is `True`.
 
         """
 
+        # Initialize values.
+        self.models = models
+        self.models_err = models_err
+        self.models_mask = models_mask
+        self.fit_lnprior = None
+        self.fit_lnlike = None
+        self.fit_lnprob = None
+        self.fit_Ndim = None
+        self.fit_chi2 = None
+        self.fit_scale = None
+
+        self.NMODEL, self.NDIM = models.shape
+        self.leafsize = leafsize
+        self.K = K
+        self.KDTrees = None
+
+        self.neighbors = None
+        self.Nneighbors = None
+        self.k = None
+        self.eps = None
+        self.p = None
+        self.dbound = None
+
         # Initialize feature map.
-        if feature_map is None or feature_map == 'None':
+        if fmap_args is None:
+            fmap_args = []
+        if fmap_kwargs is None:
+            fmap_kwargs = dict()
+        self.fmap_args = fmap_args
+        self.fmap_kwargs = fmap_kwargs
+
+        if feature_map == 'identity':
             # Identity function.
-            def feature_map(x):
-                return x
-        elif feature_map == 'asinh_mag':
-            # Asinh mags (Luptitudes).
-            feature_map = asinh_mag
+            def feature_map(x, xe, *args, **kwargs):
+                return x, xe
+        elif feature_map == 'magnitude':
+            # Magnitude function.
+            feature_map = magnitude
+        elif feature_map == 'luptitude':
+            # Asinh magnitude (Luptitude) function.
+            feature_map = luptitude
         else:
             try:
-                # Check if `feature_map` is a function.
-                feature_map(X_train[:5], Xe_train[:5])
+                # Check if `feature_map` is a valid function.
+                _ = feature_map(np.atleast_2d(X_train[0]),
+                                np.atleast_2d(Xe_train[0]))
             except:
                 # If all else fails, raise an exception.
                 raise ValueError("The provided feature map is not valid.")
+        self.feature_map = feature_map
 
         # Initialize RNG.
         if rstate is None:
             rstate = np.random
 
-        # Initialize values.
-        Ntrain, Ntarg = len(X_train), len(X_targ)  # train/target size
-        Npred = self.K * self.k  # number of total possible neighbors
-        indices = np.empty((self.K, Ntarg, self.k), dtype='int')  # all indices
-        idxs = np.empty((Ntarg, Npred), dtype='int')  # unique indices
-        Nidxs = np.empty(Ntarg, dtype='int')  # number of unique indices
+        # Build KDTrees.
+        self.KDTrees = []
+        for i, kdtree in enumerate(self._train_kdtrees(rstate=rstate)):
+            if verbose:
+                sys.stderr.write("\r{0}/{1} KDTrees constructed"
+                                 .format(i+1, self.K))
+                sys.stderr.flush()
+            self.KDTrees.append(kdtree)
+        if verbose:
+            sys.stderr.write("\n")
+            sys.stderr.flush()
 
-        # Select neighbors.
+    def _train_kdtrees(self, rstate=None):
+        """
+        Internal method used to train the `~scipy.spatial.KDTree` used
+        for quick nearest-neighbor searches.
+
+        Parameters
+        ----------
+        rstate : `~numpy.random.RandomState` instance, optional
+            Random state instance. If not passed, the default `~numpy.random`
+            instance will be used.
+
+        """
+
+        if rstate is None:
+            rstate = np.random
+
+        # Build KDTrees.
         for i in range(self.K):
-            # Print progress.
-            sys.stderr.write("\rFinding neighbors: {0}/{1}          "
-                             .format(i + 1, self.K))
-            sys.stdout.flush()
-
             # Monte Carlo data.
-            X_train_t = rstate.normal(X_train, Xe_train).astype('float32')
-            X_targ_t = rstate.normal(X_targ, Xe_targ).astype('float32')
-
-            # Transform features.
-            X_train_t, _ = feature_map(X_train_t, Xe_train)
-            X_targ_t, _ = feature_map(X_targ_t, Xe_targ)
-
+            models_t = np.array(rstate.normal(self.models,
+                                              self.models_err),
+                                dtype='float32')
+            # Transform data using feature map.
+            Y_t, Ye_t = np.array(self.feature_map(models_t, self.models_err,
+                                                  *self.fmap_args,
+                                                  **self.fmap_kwargs),
+                                 dtype='float32')
             # Construct KDTree.
-            kdtree = KDTree(X_train_t, leafsize=self.leafsize)
-            _, indices[i] = kdtree.query(X_targ_t, k=self.k,
-                                         eps=self.eps, p=self.p,
-                                         distance_upper_bound=self.dbound)
+            kdtree = KDTree(Y_t, leafsize=self.leafsize)
 
-        # Select unique neighbors.
-        sys.stderr.write('\n')
-        for i in range(Ntarg):
-            # Print progress.
-            sys.stderr.write("\rSelecting unique neighbors: {0}/{1}          "
-                             .format(i + 1, Ntarg))
-            sys.stdout.flush()
+            yield kdtree
 
-            # Using `pandas.unique` over `np.unique` to avoid additional
-            # overhead due to auto-sorting.
-            midx_unique = unique(indices[:, i, :].flatten())
-            Nidx = len(midx_unique)
-            Nidxs[i] = Nidx
-            idxs[i, :Nidx] = midx_unique
-            idxs[i, Nidx:] = -99
+    def fit(self, data, data_err, data_mask, lprob_func, rstate=None,
+            k=20, eps=1e-3, lp_norm=2, distance_upper_bound=np.inf,
+            lprob_args=None, lprob_kwargs=None, track_scale=False,
+            verbose=True):
+        """
+        Fit input models to the input data to compute the associated
+        log-posteriors using the KMCkNN approximation.
 
-        return idxs, Nidxs
+        Parameters
+        ----------
+        data : `~numpy.ndarray` of shape (Ndata, Nfilt)
+            Model values.
+
+        data_err : `~numpy.ndarray` of shape (Ndata, Nfilt)
+            Associated errors on the data values.
+
+        data_mask : `~numpy.ndarray` of shape (Ndata, Nfilt)
+            Binary mask (0/1) indicating whether the data value was observed.
+
+        lprob_func : str or func, optional
+            Log-posterior function to be used. Must return ln(prior), ln(like),
+            ln(post), Ndim, chi2, and (optionally) scale.
+
+        rstate : `~numpy.random.RandomState` instance, optional
+            Random state instance. If not passed, the default `~numpy.random`
+            instance will be used.
+
+        k : int, optional
+            The number of nearest neighbors selected by each member. Default is
+            `20`.
+
+        eps : float, optional
+            If supplied, approximate (rather than exact) nearest neighbor
+            queries are returned where the `k`th neighbor is guaranteed
+            to be no further than `(1 + eps)` times the distance to the
+            *real* `k`th nearest neighbor. Default is `1e-3`.
+
+        lp_norm : float, optional
+            The Minkowski p-norm that should be used to compute distances.
+            Default is `2` (i.e. the Euclidean distance).
+
+        distance_upper_bound : float, optional
+            If supplied, return only neighbors within this distance.
+            Default is `np.inf`.
+
+        lprob_args : args, optional
+            Arguments to be passed to `lprob_func`.
+
+        lprob_kwargs : kwargs, optional
+            Keyword arguments to be passed to `lprob_func`.
+
+        track_scale : bool, optional
+            Whether `lprob_func` also returns the scale-factor. Default is
+            `False`.
+
+        verbose : bool, optional
+            Whether to print progress to `~sys.stderr`. Default is `True`.
+
+        """
+
+        # Initialize values.
+        if lprob_args is None:
+            lprob_args = []
+        if lprob_kwargs is None:
+            lprob_kwargs = dict()
+        if rstate is None:
+            rstate = np.random
+        Ndata = len(data)
+        self.k = k
+        self.eps = eps
+        self.lp_norm = lp_norm
+        self.dbound = distance_upper_bound
+
+        # Fit data.
+        for i, results in enumerate(self._fit(data, data_err, data_mask,
+                                              lprob_func, rstate=rstate,
+                                              lprob_args=lprob_args,
+                                              lprob_kwargs=lprob_kwargs,
+                                              track_scale=track_scale)):
+            if verbose:
+                sys.stderr.write('\rFitting object {0}/{1}'.format(i+1, Ndata))
+                sys.stderr.flush()
+        if verbose:
+            sys.stderr.write('\n')
+            sys.stderr.flush()
+
+    def _fit(self, data, data_err, data_mask, lprob_func, rstate=None,
+             lprob_args=None, lprob_kwargs=None, track_scale=False):
+        """
+        Internal generator used to compute fits.
+
+        Parameters
+        ----------
+        data : `~numpy.ndarray` of shape (Ndata, Nfilt)
+            Model values.
+
+        data_err : `~numpy.ndarray` of shape (Ndata, Nfilt)
+            Associated errors on the data values.
+
+        data_mask : `~numpy.ndarray` of shape (Ndata, Nfilt)
+            Binary mask (0/1) indicating whether the data value was observed.
+
+        lprob_func : str or func, optional
+            Log-posterior function to be used. Must return ln(prior), ln(like),
+            ln(prob), Ndim, chi2, and (optionally) scale.
+
+        rstate : `~numpy.random.RandomState` instance, optional
+            Random state instance. If not passed, the default `~numpy.random`
+            instance will be used.
+
+        lprob_args : args, optional
+            Arguments to be passed to `lprob_func`.
+
+        lprob_kwargs : kwargs, optional
+            Keyword arguments to be passed to `lprob_func`.
+
+        track_scale : bool, optional
+            Whether `lprob_func` also returns the scale-factor. Default is
+            `False`.
+
+        """
+
+        # Initialize values.
+        if lprob_args is None:
+            lprob_args = []
+        if lprob_kwargs is None:
+            lprob_kwargs = dict()
+        if rstate is None:
+            rstate = np.random
+
+        Ndata = len(data)
+        Nmodels = self.K * self.k
+        self.NDATA = Ndata
+        self.Nneighbors = np.zeros(Ndata, dtype='int')
+        self.neighbors = np.zeros((Ndata, Nmodels), dtype='int') - 99
+        self.fit_lnprior = np.zeros((Ndata, Nmodels), dtype='float') - np.inf
+        self.fit_lnlike = np.zeros((Ndata, Nmodels), dtype='float') - np.inf
+        self.fit_lnprob = np.zeros((Ndata, Nmodels), dtype='float') - np.inf
+        self.fit_Ndim = np.zeros((Ndata, Nmodels), dtype='int')
+        self.fit_chi2 = np.zeros((Ndata, Nmodels), dtype='float') + np.inf
+        self.fit_scale = np.ones((Ndata, Nmodels), dtype='float')
+
+        # Fit data.
+        for i, (x, xe, xm) in enumerate(zip(data, data_err, data_mask)):
+
+            # Nearest-neighbor search.
+            x_t = rstate.normal(x, xe)  # monte carlo data
+            y_t, ye_t = self.feature_map(x_t, xe, *self.fmap_args,
+                                         **self.fmap_kwargs)  # map to features
+            y_t = np.atleast_2d(y_t)
+            indices = np.array([T.query(y_t, k=self.k, eps=self.eps,
+                                        p=self.lp_norm,
+                                        distance_upper_bound=self.dbound)[1][0]
+                                for T in self.KDTrees]).flatten()  # all idxs
+
+            # Unique neighbor selection.
+            idxs = unique(indices)
+            Nidx = len(idxs)
+            self.Nneighbors[i] = Nidx
+            self.neighbors[i, :Nidx] = np.array(idxs)
+
+            # Compute posteriors.
+            results = lprob_func(x, xe, xm, self.models[idxs],
+                                 self.models_err[idxs], self.models_mask[idxs],
+                                 *lprob_args, **lprob_kwargs)
+            self.fit_lnprior[i, :Nidx] = results[0]  # ln(prior)
+            self.fit_lnlike[i, :Nidx] = results[1]  # ln(like)
+            self.fit_lnprob[i, :Nidx] = results[2]  # ln(prob)
+            self.fit_Ndim[i, :Nidx] = results[3]  # dimensionality of fit
+            self.fit_chi2[i, :Nidx] = results[4]  # chi2
+            if track_scale:
+                self.fit_scale[i, :Nidx] = results[5]  # scale-factor
+
+            yield results
+
+    def predict(self, model_labels, model_label_errs, label_dict=None,
+                label_grid=None, logwt=None, kde_args=None, kde_kwargs=None,
+                return_gof=False, verbose=True):
+        """
+        Compute photometric 1-D predictions to the target distribution.
+
+        Parameters
+        ----------
+        model_labels : `~numpy.ndarray` of shape (Nmodel)
+            Model values.
+
+        model_label_errs : `~numpy.ndarray` of shape (Nmodel)
+            Associated errors on the data values.
+
+        label_dict : `~frankenz.pdf.PDFDict` object, optional
+            Dictionary of pre-computed stationary kernels. If provided,
+            :meth:`~frankenz.pdf.gauss_kde_dict` will be used for KDE.
+
+        label_grid : `~numpy.ndarray` of shape (Ngrid), optional
+            Grid points to evaluate the 1-D PDFs over. Only used when
+            `label_dict` is not provided, at which point
+            :meth:`~frankenz.pdf.gauss_kde` will be used for KDE.
+
+        logwt : `~numpy.ndarray` of shape (Ndata, Nmodel), optional
+            A new set of log-weights used to compute the marginalized 1-D
+            PDFs in place of the log-probability.
+
+        kde_args : args, optional
+            Arguments to be passed to the KDE function.
+
+        kde_kwargs : kwargs, optional
+            Keyword arguments to be passed to the KDE function.
+
+        return_gof : bool, optional
+            Whether to return a tuple containing the ln(MAP) and
+            ln(evidence) values for the predictions
+            along with the pdfs. Default is `False`.
+
+        verbose : bool, optional
+            Whether to print progress to `~sys.stderr`. Default is `True`.
+
+        """
+
+        # Initialize values.
+        if kde_args is None:
+            kde_args = []
+        if kde_kwargs is None:
+            kde_kwargs = dict()
+        if logwt is None:
+            logwt = self.fit_lnprob
+        if label_dict is None and label_grid is None:
+            raise ValueError("`label_dict` or `label_grid` must be specified.")
+        if self.fit_lnprob is None and logwt is None:
+            raise ValueError("Fits have not been computed and weights have "
+                             "not been provided.")
+        if label_dict is not None:
+            Nx = label_dict.Ngrid
+        else:
+            Nx = len(label_grid)
+        Ndata = self.NDATA
+        pdfs = np.zeros((Ndata, Nx))
+        if return_gof:
+            lmap = np.zeros(Ndata)
+            levid = np.zeros(Ndata)
+
+        # Compute PDFs.
+        for i, res in enumerate(self._predict(model_labels, model_label_errs,
+                                              label_dict=label_dict,
+                                              label_grid=label_grid,
+                                              logwt=logwt, kde_args=kde_args,
+                                              kde_kwargs=kde_kwargs)):
+            pdf, gof = res
+            pdfs[i] = pdf
+            if return_gof:
+                lmap[i], levid[i] = gof  # save gof metrics
+            if verbose:
+                sys.stderr.write('\rGenerating PDF {0}/{1}'
+                                 .format(i+1, Ndata))
+                sys.stderr.flush()
+        if verbose:
+            sys.stderr.write('\n')
+            sys.stderr.flush()
+
+        if return_gof:
+            return pdfs, (lmap, levid)
+        else:
+            return pdfs
+
+    def _predict(self, model_labels, model_label_errs, label_dict=None,
+                 label_grid=None, logwt=None, kde_args=None, kde_kwargs=None):
+        """
+        Internal generator used to compute photometric 1-D predictions.
+
+        Parameters
+        ----------
+        model_labels : `~numpy.ndarray` of shape (Nmodel)
+            Model values.
+
+        model_label_errs : `~numpy.ndarray` of shape (Nmodel)
+            Associated errors on the data values.
+
+        label_dict : `~frankenz.pdf.PDFDict` object, optional
+            Dictionary of pre-computed stationary kernels. If provided,
+            :meth:`~frankenz.pdf.gauss_kde_dict` will be used for KDE.
+
+        label_grid : `~numpy.ndarray` of shape (Ngrid), optional
+            Grid points to evaluate the 1-D PDFs over. Only used when
+            `label_dict` is not provided, at which point
+            :meth:`~frankenz.pdf.gauss_kde` will be used for KDE.
+
+        logwt : `~numpy.ndarray` of shape (Ndata, Nmodel), optional
+            A new set of log-weights used to compute the marginalized 1-D
+            PDFs in place of the log-posterior.
+
+        kde_args : args, optional
+            Arguments to be passed to the KDE function.
+
+        kde_kwargs : kwargs, optional
+            Keyword arguments to be passed to the KDE function.
+
+        """
+
+        # Initialize values.
+        if kde_args is None:
+            kde_args = []
+        if kde_kwargs is None:
+            kde_kwargs = dict()
+        if logwt is None:
+            logwt = self.fit_lnprob
+        if label_dict is None and label_grid is None:
+            raise ValueError("`label_dict` or `label_grid` must be specified.")
+
+        # Compute PDFs.
+        if label_dict is not None:
+            # Use dictionary if available.
+            for i, lwt in enumerate(logwt):
+                Nidx = self.Nneighbors[i]  # number of models
+                idxs = self.neighbors[i, :Nidx]  # model indices
+                lwt_m = lwt[:Nidx]  # reduced set of weights
+                lmap, levid = max(lwt_m), logsumexp(lwt_m)
+                wt = np.exp(lwt_m - levid)
+                pdf = gauss_kde_dict(label_dict, y=model_labels[idxs],
+                                     y_std=model_label_errs[idxs], y_wt=wt,
+                                     *kde_args, **kde_kwargs)
+                yield pdf, (lmap, levid)
+        else:
+            # Otherwise just use KDE.
+            for i, lwt in enumerate(logwt):
+                Nidx = self.Nneighbors[i]  # number of models
+                idxs = self.neighbors[i, :Nidx]  # model indices
+                lwt_m = lwt[:Nidx]  # reduced set of weights
+                lmap, levid = max(lwt_m), logsumexp(lwt_m)
+                wt = np.exp(lwt_m - levid)
+                pdf = gauss_kde(model_labels[idxs], model_label_errs[idxs],
+                                label_grid, y_wt=wt, *kde_args, **kde_kwargs)
+                yield pdf, (lmap, levid)
+
+    def fit_predict(self, data, data_err, data_mask, lprob_func,
+                    model_labels, model_label_errs, rstate=None,
+                    k=20, eps=1e-3, lp_norm=2, distance_upper_bound=np.inf,
+                    label_dict=None, label_grid=None, kde_args=None,
+                    kde_kwargs=None, lprob_args=None, lprob_kwargs=None,
+                    return_gof=False, track_scale=False, verbose=True,
+                    save_fits=True):
+        """
+        Fit input models to the input data to compute the associated
+        log-posteriors and 1-D predictions using the KMCkNN approximation.
+
+        Parameters
+        ----------
+        data : `~numpy.ndarray` of shape (Ndata, Nfilt)
+            Model values.
+
+        data_err : `~numpy.ndarray` of shape (Ndata, Nfilt)
+            Associated errors on the data values.
+
+        data_mask : `~numpy.ndarray` of shape (Ndata, Nfilt)
+            Binary mask (0/1) indicating whether the data value was observed.
+
+        lprob_func : str or func, optional
+            Log-posterior function to be used. Must return ln(prior), ln(like),
+            ln(post), Ndim, chi2, and (optionally) scale.
+
+        model_labels : `~numpy.ndarray` of shape (Nmodel)
+            Model values.
+
+        model_label_errs : `~numpy.ndarray` of shape (Nmodel)
+            Associated errors on the data values.
+
+        rstate : `~numpy.random.RandomState` instance, optional
+            Random state instance. If not passed, the default `~numpy.random`
+            instance will be used.
+
+        k : int, optional
+            The number of nearest neighbors selected by each member. Default is
+            `20`.
+
+        eps : float, optional
+            If supplied, approximate (rather than exact) nearest neighbor
+            queries are returned where the `k`th neighbor is guaranteed
+            to be no further than `(1 + eps)` times the distance to the
+            *real* `k`th nearest neighbor. Default is `1e-3`.
+
+        lp_norm : float, optional
+            The Minkowski p-norm that should be used to compute distances.
+            Default is `2` (i.e. the Euclidean distance).
+
+        distance_upper_bound : float, optional
+            If supplied, return only neighbors within this distance.
+            Default is `np.inf`.
+
+        label_dict : `~frankenz.pdf.PDFDict` object, optional
+            Dictionary of pre-computed stationary kernels. If provided,
+            :meth:`~frankenz.pdf.gauss_kde_dict` will be used for KDE.
+
+        label_grid : `~numpy.ndarray` of shape (Ngrid), optional
+            Grid points to evaluate the 1-D PDFs over. Only used when
+            `label_dict` is not provided, at which point
+            :meth:`~frankenz.pdf.gauss_kde` will be used for KDE.
+
+        kde_args : args, optional
+            Arguments to be passed to the KDE function.
+
+        kde_kwargs : kwargs, optional
+            Keyword arguments to be passed to the KDE function.
+
+        lprob_args : args, optional
+            Arguments to be passed to `lprob_func`.
+
+        lprob_kwargs : kwargs, optional
+            Keyword arguments to be passed to `lprob_func`.
+
+        return_gof : bool, optional
+            Whether to return a tuple containing the ln(MAP) and
+            ln(evidence) values for the predictions
+            along with the pdfs. Default is `False`.
+
+        track_scale : bool, optional
+            Whether `lprob_func` also returns the scale-factor. Default is
+            `False`.
+
+        verbose : bool, optional
+            Whether to print progress to `~sys.stderr`. Default is `True`.
+
+        save_fits : bool, optional
+            Whether to save fits internally while computing predictions.
+            Default is `True`.
+
+        """
+
+        # Initialize values.
+        if lprob_args is None:
+            lprob_args = []
+        if lprob_kwargs is None:
+            lprob_kwargs = dict()
+        if kde_args is None:
+            kde_args = []
+        if kde_kwargs is None:
+            kde_kwargs = dict()
+        if label_dict is None and label_grid is None:
+            raise ValueError("`label_dict` or `label_grid` must be specified.")
+        if label_dict is not None:
+            Nx = label_dict.Ngrid
+        else:
+            Nx = len(label_grid)
+        Ndata = len(data)
+        pdfs = np.zeros((Ndata, Nx))
+        if return_gof:
+            lmap = np.zeros(Ndata)
+            levid = np.zeros(Ndata)
+        if rstate is None:
+            rstate = np.random
+        self.k = k
+        self.eps = eps
+        self.lp_norm = lp_norm
+        self.dbound = distance_upper_bound
+
+        # Generate PDFs.
+        for i, res in enumerate(self._fit_predict(data, data_err, data_mask,
+                                                  lprob_func, model_labels,
+                                                  model_label_errs,
+                                                  rstate=rstate,
+                                                  label_dict=label_dict,
+                                                  label_grid=label_grid,
+                                                  kde_args=kde_args,
+                                                  kde_kwargs=kde_kwargs,
+                                                  lprob_args=lprob_args,
+                                                  lprob_kwargs=lprob_kwargs,
+                                                  track_scale=track_scale,
+                                                  save_fits=save_fits)):
+            pdf, gof = res
+            pdfs[i] = pdf
+            if return_gof:
+                lmap[i], levid[i] = gof  # save gof metrics
+            if verbose:
+                sys.stderr.write('\rGenerating PDF {0}/{1}'
+                                 .format(i+1, Ndata))
+                sys.stderr.flush()
+        if verbose:
+            sys.stderr.write('\n')
+            sys.stderr.flush()
+
+        if return_gof:
+            return pdfs, (lmap, levid)
+        else:
+            return pdfs
+
+    def _fit_predict(self, data, data_err, data_mask, lprob_func,
+                     model_labels, model_label_errs, rstate=None,
+                     label_dict=None, label_grid=None, kde_args=None,
+                     kde_kwargs=None, lprob_args=None, lprob_kwargs=None,
+                     track_scale=False, save_fits=True):
+        """
+        Internal generator used to fit and compute predictions.
+
+        Parameters
+        ----------
+        data : `~numpy.ndarray` of shape (Ndata, Nfilt)
+            Model values.
+
+        data_err : `~numpy.ndarray` of shape (Ndata, Nfilt)
+            Associated errors on the data values.
+
+        data_mask : `~numpy.ndarray` of shape (Ndata, Nfilt)
+            Binary mask (0/1) indicating whether the data value was observed.
+
+        lprob_func : str or func, optional
+            Log-posterior function to be used. Must return ln(prior), ln(like),
+            ln(post), Ndim, chi2, and (optionally) scale.
+
+        model_labels : `~numpy.ndarray` of shape (Nmodel)
+            Model values.
+
+        model_label_errs : `~numpy.ndarray` of shape (Nmodel)
+            Associated errors on the data values.
+
+        rstate : `~numpy.random.RandomState` instance, optional
+            Random state instance. If not passed, the default `~numpy.random`
+            instance will be used.
+
+        label_dict : `~frankenz.pdf.PDFDict` object, optional
+            Dictionary of pre-computed stationary kernels. If provided,
+            :meth:`~frankenz.pdf.gauss_kde_dict` will be used for KDE.
+
+        label_grid : `~numpy.ndarray` of shape (Ngrid), optional
+            Grid points to evaluate the 1-D PDFs over. Only used when
+            `label_dict` is not provided, at which point
+            :meth:`~frankenz.pdf.gauss_kde` will be used for KDE.
+
+        kde_args : args, optional
+            Arguments to be passed to the KDE function.
+
+        kde_kwargs : kwargs, optional
+            Keyword arguments to be passed to the KDE function.
+
+        lprob_args : args, optional
+            Arguments to be passed to `lprob_func`.
+
+        lprob_kwargs : kwargs, optional
+            Keyword arguments to be passed to `lprob_func`.
+
+        track_scale : bool, optional
+            Whether `lprob_func` also returns the scale-factor. Default is
+            `False`.
+
+        save_fits : bool, optional
+            Whether to save fits internally while computing predictions.
+            Default is `True`.
+
+        """
+
+        # Initialize values.
+        if lprob_args is None:
+            lprob_args = []
+        if lprob_kwargs is None:
+            lprob_kwargs = dict()
+        if kde_args is None:
+            kde_args = []
+        if kde_kwargs is None:
+            kde_kwargs = dict()
+        if label_dict is None and label_grid is None:
+            raise ValueError("`label_dict` or `label_grid` must be specified.")
+        if rstate is None:
+            rstate = np.random
+        Ndata = len(data)
+        Nmodels = self.K * self.k
+        if save_fits:
+            self.Nneighbors = np.zeros(Ndata, dtype='int')
+            self.neighbors = np.zeros((Ndata, Nmodels), dtype='int') - 99
+            self.fit_lnprior = np.zeros((Ndata, Nmodels), dtype='float')-np.inf
+            self.fit_lnlike = np.zeros((Ndata, Nmodels), dtype='float')-np.inf
+            self.fit_lnprob = np.zeros((Ndata, Nmodels), dtype='float')-np.inf
+            self.fit_Ndim = np.zeros((Ndata, Nmodels), dtype='int')
+            self.fit_chi2 = np.zeros((Ndata, Nmodels), dtype='float') + np.inf
+            self.fit_scale = np.ones((Ndata, Nmodels), dtype='float')
+            self.NDATA = Ndata
+
+        # Run generator.
+        for i, (x, xe, xm) in enumerate(zip(data, data_err, data_mask)):
+
+            # Nearest-neighbor search.
+            x_t = rstate.normal(x, xe)  # monte carlo data
+            y_t, ye_t = self.feature_map(x_t, xe, *self.fmap_args,
+                                         **self.fmap_kwargs)  # map to features
+            y_t = np.atleast_2d(y_t)
+            indices = np.array([T.query(y_t, k=self.k, eps=self.eps,
+                                        p=self.lp_norm,
+                                        distance_upper_bound=self.dbound)[1][0]
+                                for T in self.KDTrees]).flatten()  # all idxs
+
+            # Unique neighbor selection.
+            idxs = unique(indices)
+            Nidx = len(idxs)
+            if save_fits:
+                self.Nneighbors[i] = Nidx
+                self.neighbors[i, :Nidx] = np.array(idxs)
+
+            # Compute posteriors.
+            results = lprob_func(x, xe, xm, self.models[idxs],
+                                 self.models_err[idxs], self.models_mask[idxs],
+                                 *lprob_args, **lprob_kwargs)
+            if save_fits:
+                self.fit_lnprior[i, :Nidx] = results[0]  # ln(prior)
+                self.fit_lnlike[i, :Nidx] = results[1]  # ln(like)
+                self.fit_lnprob[i, :Nidx] = results[2]  # ln(prob)
+                self.fit_Ndim[i, :Nidx] = results[3]  # dimensionality of fit
+                self.fit_chi2[i, :Nidx] = results[4]  # chi2
+                if track_scale:
+                    self.fit_scale[i, :Nidx] = results[5]  # scale-factor
+            lnprob = results[2]  # reduced set of posteriors
+
+            # Compute PDF.
+            lmap, levid = max(lnprob), logsumexp(lnprob)
+            wt = np.exp(lnprob - levid)
+            if label_dict is not None:
+                pdf = gauss_kde_dict(label_dict, y=model_labels[idxs],
+                                     y_std=model_label_errs[idxs], y_wt=wt,
+                                     *kde_args, **kde_kwargs)
+                yield pdf, (lmap, levid)
+            else:
+                pdf = gauss_kde(model_labels[idxs], model_label_errs[idxs],
+                                label_grid, y_wt=wt,
+                                *kde_args, **kde_kwargs)
+                yield pdf, (lmap, levid)
