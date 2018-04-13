@@ -374,7 +374,7 @@ def gauss_kde(y, y_std, x, dx=None, y_wt=None, sig_thresh=5., wt_thresh=1e-3,
         with (relatively) negligible weights. Default is `1e-3`.
 
     cdf_thresh : float, optional
-        The `1 - cdf_thresh` threshold of the (sorted) CDF used to ignore
+        The `1. - cdf_thresh` threshold of the (sorted) CDF used to ignore
         objects with (relatively) negligible weights. This option is only
         used when `wt_thresh=None`. Default is `2e-4`.
 
@@ -412,7 +412,7 @@ def gauss_kde(y, y_std, x, dx=None, y_wt=None, sig_thresh=5., wt_thresh=1e-3,
         idx_sort = np.argsort(y_wt)  # sort
         y_cdf = np.cumsum(y_wt[idx_sort])  # compute CDF
         y_cdf /= y_cdf[-1]  # normalize
-        sel_arr = idx_sort[y_cdf <= (1 - cdf_thresh)]
+        sel_arr = idx_sort[y_cdf <= (1. - cdf_thresh)]
 
     # Compute PDF.
     for i in sel_arr:
@@ -455,7 +455,7 @@ def gauss_kde_dict(pdfdict, y=None, y_std=None, y_idx=None, y_std_idx=None,
         with (relatively) negligible weights. Default is `1e-3`.
 
     cdf_thresh : float, optional
-        The `1 - cdf_thresh` threshold of the (sorted) CDF used to ignore
+        The `1. - cdf_thresh` threshold of the (sorted) CDF used to ignore
         objects with (relatively) negligible weights. This option is only
         used when `wt_thresh=None`. Default is `2e-4`.
 
@@ -493,7 +493,7 @@ def gauss_kde_dict(pdfdict, y=None, y_std=None, y_idx=None, y_std_idx=None,
         idx_sort = np.argsort(y_wt)  # sort
         y_cdf = np.cumsum(y_wt[idx_sort])  # compute CDF
         y_cdf /= y_cdf[-1]  # normalize
-        sel_arr = idx_sort[y_cdf <= (1 - cdf_thresh)]
+        sel_arr = idx_sort[y_cdf <= (1. - cdf_thresh)]
 
     # Compute PDF.
     sigma_dict = pdfdict.sigma_dict  # Gaussian kernel dictionary
