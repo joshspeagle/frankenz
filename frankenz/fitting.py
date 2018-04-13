@@ -319,11 +319,12 @@ class BruteForce():
         # Generate PDFs.
         if label_dict is not None:
             # Use dictionary if available.
+            y_idx, y_std_idx = label_dict.fit(model_labels, model_label_errs)
             for i, lwt in enumerate(logwt):
                 lmap, levid = max(lwt), logsumexp(lwt)
                 wt = np.exp(lwt - levid)
-                pdf = gauss_kde_dict(label_dict, y=model_labels,
-                                     y_std=model_label_errs, y_wt=wt,
+                pdf = gauss_kde_dict(label_dict, y_idx=y_idx,
+                                     y_std_idx=y_std_idx, y_wt=wt,
                                      *kde_args, **kde_kwargs)
                 yield pdf, (lmap, levid)
         else:
@@ -535,6 +536,8 @@ class BruteForce():
             self.fit_chi2 = np.zeros((Ndata, Nmodels), dtype='float')
             self.fit_scale = np.ones((Ndata, Nmodels), dtype='float')
             self.NDATA = Ndata
+        if label_dict is not None:
+            y_idx, y_std_idx = label_dict.fit(model_labels, model_label_errs)
 
         # Run generator.
         for i, (x, xe, xm) in enumerate(zip(data, data_err, data_mask)):
@@ -556,8 +559,8 @@ class BruteForce():
             lmap, levid = max(lnprob), logsumexp(lnprob)
             wt = np.exp(lnprob - levid)
             if label_dict is not None:
-                pdf = gauss_kde_dict(label_dict, y=model_labels,
-                                     y_std=model_label_errs, y_wt=wt,
+                pdf = gauss_kde_dict(label_dict, y_idx=y_idx,
+                                     y_std_idx=y_std_idx, y_wt=wt,
                                      *kde_args, **kde_kwargs)
                 yield pdf, (lmap, levid)
             else:
@@ -1032,14 +1035,15 @@ class NearestNeighbors():
         # Compute PDFs.
         if label_dict is not None:
             # Use dictionary if available.
+            y_idx, y_std_idx = label_dict.fit(model_labels, model_label_errs)
             for i, lwt in enumerate(logwt):
                 Nidx = self.Nneighbors[i]  # number of models
                 idxs = self.neighbors[i, :Nidx]  # model indices
                 lwt_m = lwt[:Nidx]  # reduced set of weights
                 lmap, levid = max(lwt_m), logsumexp(lwt_m)
                 wt = np.exp(lwt_m - levid)
-                pdf = gauss_kde_dict(label_dict, y=model_labels[idxs],
-                                     y_std=model_label_errs[idxs], y_wt=wt,
+                pdf = gauss_kde_dict(label_dict, y_idx=y_idx[idxs],
+                                     y_std_idx=y_std_idx[idxs], y_wt=wt,
                                      *kde_args, **kde_kwargs)
                 yield pdf, (lmap, levid)
         else:
@@ -1293,6 +1297,8 @@ class NearestNeighbors():
             self.fit_chi2 = np.zeros((Ndata, Nmodels), dtype='float') + np.inf
             self.fit_scale = np.ones((Ndata, Nmodels), dtype='float')
             self.NDATA = Ndata
+        if label_dict is not None:
+            y_idx, y_std_idx = label_dict.fit(model_labels, model_label_errs)
 
         # Run generator.
         for i, (x, xe, xm) in enumerate(zip(data, data_err, data_mask)):
@@ -1332,8 +1338,8 @@ class NearestNeighbors():
             lmap, levid = max(lnprob), logsumexp(lnprob)
             wt = np.exp(lnprob - levid)
             if label_dict is not None:
-                pdf = gauss_kde_dict(label_dict, y=model_labels[idxs],
-                                     y_std=model_label_errs[idxs], y_wt=wt,
+                pdf = gauss_kde_dict(label_dict, y_idx=y_idx[idxs],
+                                     y_std_idx=y_std_idx[idxs], y_wt=wt,
                                      *kde_args, **kde_kwargs)
                 yield pdf, (lmap, levid)
             else:

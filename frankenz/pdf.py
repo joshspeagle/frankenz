@@ -341,7 +341,7 @@ def gaussian_bin(mu, std, bins):
 
 
 def gauss_kde(y, y_std, x, dx=None, y_wt=None, sig_thresh=5., wt_thresh=1e-3,
-              *args, **kwargs):
+              cdf_thresh=2e-4, *args, **kwargs):
     """
     Compute smoothed PDF using kernel density estimation.
 
@@ -373,6 +373,11 @@ def gauss_kde(y, y_std, x, dx=None, y_wt=None, sig_thresh=5., wt_thresh=1e-3,
         The threshold `wt_thresh * max(y_wt)` used to ignore objects
         with (relatively) negligible weights. Default is `1e-3`.
 
+    cdf_thresh : float, optional
+        The `1 - cdf_thresh` threshold of the (sorted) CDF used to ignore
+        objects with (relatively) negligible weights. This option is only
+        used when `wt_thresh=None`. Default is `2e-4`.
+
     Returns
     -------
     pdf : `~numpy.ndarray` with shape (Nx,)
@@ -386,6 +391,8 @@ def gauss_kde(y, y_std, x, dx=None, y_wt=None, sig_thresh=5., wt_thresh=1e-3,
         dx = x[1] - x[0]
     if y_wt is None:
         y_wt = np.ones(Ny)
+    if wt_thresh is None and cdf_thresh is None:
+        wt_thresh = -np.inf  # default to no clipping/thresholding
 
     # Clipping kernels.
     centers = np.array((y - x[0]) / dx, dtype='int')  # discretized centers
@@ -396,22 +403,31 @@ def gauss_kde(y, y_std, x, dx=None, y_wt=None, sig_thresh=5., wt_thresh=1e-3,
     # Initialize PDF.
     pdf = np.zeros(Nx)
 
-    # Apply weight thresholding.
-    sel_arr = np.arange(Ny)[y_wt > (wt_thresh * np.max(y_wt))]
+    # Apply thresholding.
+    if wt_thresh is not None:
+        # Use relative amplitude to threshold.
+        sel_arr = np.arange(Ny)[y_wt > (wt_thresh * np.max(y_wt))]
+    else:
+        # Use CDF to threshold.
+        idx_sort = np.argsort(y_wt)  # sort
+        y_cdf = np.cumsum(y_wt[idx_sort])  # compute CDF
+        y_cdf /= y_cdf[-1]  # normalize
+        sel_arr = idx_sort[y_cdf <= (1 - cdf_thresh)]
 
     # Compute PDF.
     for i in sel_arr:
         # Stack weighted Gaussian kernel over array slice.
         gkde = gaussian(y[i], y_std[i], x[lowers[i]:uppers[i]])
         norm = sum(gkde)
-        if norm > 0.:
+        if norm != 0.:
             pdf[lowers[i]:uppers[i]] += y_wt[i] / norm * gkde
 
     return pdf
 
 
 def gauss_kde_dict(pdfdict, y=None, y_std=None, y_idx=None, y_std_idx=None,
-                   y_wt=None, wt_thresh=1e-3, *args, **kwargs):
+                   y_wt=None, wt_thresh=1e-3, cdf_thresh=2e-4,
+                   *args, **kwargs):
     """
     Compute smoothed PDF using kernel density estimation based on a
     pre-computed dictionary and pre-defined grid.
@@ -438,6 +454,11 @@ def gauss_kde_dict(pdfdict, y=None, y_std=None, y_idx=None, y_std_idx=None,
         The threshold `wt_thresh * max(y_wt)` used to ignore objects
         with (relatively) negligible weights. Default is `1e-3`.
 
+    cdf_thresh : float, optional
+        The `1 - cdf_thresh` threshold of the (sorted) CDF used to ignore
+        objects with (relatively) negligible weights. This option is only
+        used when `wt_thresh=None`. Default is `2e-4`.
+
     Returns
     -------
     pdf : `~numpy.ndarray` with shape (Nx,)
@@ -453,6 +474,8 @@ def gauss_kde_dict(pdfdict, y=None, y_std=None, y_idx=None, y_std_idx=None,
     else:
         raise ValueError("At least one pair of (`y`, `y_std`) or "
                          "(`y_idx`, `y_idx_std`) must be specified.")
+    if wt_thresh is None and cdf_thresh is None:
+        wt_thresh = -np.inf  # default to no clipping/thresholding
 
     # Initialize PDF.
     Nx = pdfdict.Ngrid
@@ -462,7 +485,15 @@ def gauss_kde_dict(pdfdict, y=None, y_std=None, y_idx=None, y_std_idx=None,
     Ny = len(y_idx)
     if y_wt is None:
         y_wt = np.ones(Ny)
-    sel_arr = np.arange(Ny)[y_wt > (wt_thresh * np.max(y_wt))]
+    if wt_thresh is not None:
+        # Use relative amplitude to threshold.
+        sel_arr = np.arange(Ny)[y_wt > (wt_thresh * np.max(y_wt))]
+    else:
+        # Use CDF to threshold.
+        idx_sort = np.argsort(y_wt)  # sort
+        y_cdf = np.cumsum(y_wt[idx_sort])  # compute CDF
+        y_cdf /= y_cdf[-1]  # normalize
+        sel_arr = idx_sort[y_cdf <= (1 - cdf_thresh)]
 
     # Compute PDF.
     sigma_dict = pdfdict.sigma_dict  # Gaussian kernel dictionary

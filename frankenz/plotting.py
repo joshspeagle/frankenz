@@ -22,9 +22,10 @@ from scipy.ndimage.filters import gaussian_filter
 __all__ = ["truth_vs_pdf"]
 
 
-def truth_vs_pdf(vals, errs, pdfs, pdict, weights=None, pdf_thresh=1e-3,
-                 wt_thresh=1e-3, plot_thresh=1., cmap='viridis',
-                 smooth=0, verbose=False):
+def truth_vs_pdf(vals, errs, pdfs, pdict, weights=None, pdf_wt_thresh=1e-3,
+                 pdf_cdf_thresh=2e-4, wt_thresh=1e-3, cdf_thresh=2e-4,
+                 plot_thresh=1., cmap='viridis', smooth=0, plot_kwargs=None,
+                 verbose=False, *args, **kwargs):
     """
     Plot truth values vs their corresponding PDFs.
 
@@ -33,7 +34,7 @@ def truth_vs_pdf(vals, errs, pdfs, pdict, weights=None, pdf_thresh=1e-3,
     vals : `~numpy.ndarray` with shape (Nobj,)
         Truth values.
 
-    vals : `~numpy.ndarray` with shape (Nobj,)
+    errs : `~numpy.ndarray` with shape (Nobj,)
         Errors on the truth values (or smoothing scales).
 
     pdfs : `~numpy.ndarray` with shape (Nobj, Ngrid)
@@ -46,13 +47,23 @@ def truth_vs_pdf(vals, errs, pdfs, pdict, weights=None, pdf_thresh=1e-3,
         An array used to re-weighted the corresponding PDFs.
         Default is `None`.
 
-    pdf_thresh : float, optional
+    pdf_wt_thresh : float, optional
         The threshold used to clip values when stacking each PDF.
         Default is `1e-3`.
+
+    pdf_cdf_thresh : float, optional
+        The `1 - cdf_thresh` threshold of the (sorted) CDF used to clip values
+        when stacking each PDF. This option is only
+        used when `pdf_wt_thresh=None`. Default is `2e-4`.
 
     wt_thresh : float, optional
         The threshold used to ignore PDFs when stacking.
         Default is `1e-3`.
+
+    cdf_thresh : float, optional
+        The `1 - cdf_thresh` threshold of the (sorted) CDF used to ignore
+        PDFs when stacking.. This option is only used when `wt_thresh=None`.
+        Default is `2e-4`.
 
     plot_thresh : float, optional
         The threshold used to threshold the colormap when plotting.
@@ -64,6 +75,9 @@ def truth_vs_pdf(vals, errs, pdfs, pdict, weights=None, pdf_thresh=1e-3,
     smooth : float, optional
         The smoothing scale used to apply 2-D Gaussian smoothing to the
         results. Default is `0` (no smoothing).
+
+    plot_kwargs : kwargs, optional
+        Keyword arguments to be passed to `~matplotlib.pyplot.imshow`.
 
     verbose : bool, optional
         Whether to print progress. Default is `False`.
@@ -77,30 +91,65 @@ def truth_vs_pdf(vals, errs, pdfs, pdict, weights=None, pdf_thresh=1e-3,
 
     # Initialize values
     Ngrid, Nobj = pdict.Ngrid, len(vals)
-    vidxs, eidxs = pdict.fit(vals, errs)
     stack = np.zeros((Ngrid, Ngrid))  # 2-D grid
+    if pdf_wt_thresh is None and pdf_cdf_thresh is None:
+        pdf_wt_thresh = -np.inf
+    if plot_kwargs is None:
+        plot_kwargs = dict()
 
+    # Apply weight thresholding.
     if weights is None:
         weights = np.ones(Nobj, dtype='float32')
-    wtmax = max(weights)
+    if wt_thresh is None and cdf_thresh is None:
+        wt_thresh = -np.inf  # default to no clipping/thresholding
+    if wt_thresh is not None:
+        # Use relative amplitude to threshold.
+        sel_arr = weights > (wt_thresh * np.max(weights))
+        objids = np.arange(Nobj)
+    else:
+        # Use CDF to threshold.
+        idx_sort = np.argsort(weights)  # sort
+        w_cdf = np.cumsum(weights[idx_sort])  # compute CDF
+        w_cdf /= w_cdf[-1]  # normalize
+        sel_arr = w_cdf <= (1. - cdf_thresh)
+        objids = idx_sort
 
     # Compute 2-D stacked PDF.
-    for i in range(Nobj):
-        if verbose and i % 5000 == 0:
-            sys.stderr.write(str(i)+' ')
-        if weights[i] > wt_thresh * wtmax:  # weight threshold cut
-            tpdf = pdfs[i]  # pdf
-            tsel = tpdf > max(tpdf) * pdf_thresh  # pdf threshold cut
-            x_idx, x_cent = eidxs[i], vidxs[i]  # kernels and positions
+    vidxs, eidxs = pdict.fit(vals, errs)  # discretize vals, errs
+    for i, objid, sel in zip(np.arange(Nobj), objids, sel_arr):
+        # Pring progress.
+        if verbose:
+            sys.stderr.write('\rStacking {0}/{1}'.format(i+1, Nobj))
+            sys.stderr.flush()
+        # Stack object if it's above the threshold.
+        if sel:
+            tpdf = np.array(pdfs[objid])  # pdf
+            if pdf_wt_thresh is not None:
+                tsel = tpdf > max(tpdf) * pdf_wt_thresh  # pdf threshold cut
+            else:
+                psort = np.argsort(tpdf)
+                pcdf = np.cumsum(tpdf[psort])
+                tsel = psort[pcdf <= (1. - pdf_cdf_thresh)]  # cdf thresh cut
+            tpdf[tsel] /= np.sum(tpdf[tsel])  # re-normalize
+
+            # Compute kernel.
+            x_idx, x_cent = eidxs[objid], vidxs[objid]  # index/position
             x_bound = pdict.sigma_width[x_idx]  # kernel width
+            pkern = np.array(pdict.sigma_dict[x_idx])  # kernel
+            xlow = max(x_cent - x_bound, 0)  # lower bound
+            xhigh = min(x_cent + x_bound + 1, Ngrid)  # upper bound
+            lpad = xlow - (x_cent - x_bound)  # low pad
+            hpad = 2 * x_bound + xhigh - (x_cent + x_bound)  # high pad
+
+            # Create 2-D PDF.
+            tstack = (pkern[:, None] * tpdf[tsel])[lpad:hpad]
+            tstack /= np.sum(tstack)
 
             # Stack results.
-            tstack = pdict.sigma_dict[x_idx][:, None] * tpdf[tsel]  # 2-D pdf
-            xlow = max(x_cent - x_bound, 0)
-            xhigh = min(x_cent + x_bound + 1, Ngrid)
-            lpad = xlow - (x_cent - x_bound)
-            hpad = 2 * x_bound + xhigh - (x_cent + x_bound)
-            stack[xlow:xhigh, tsel] += tstack[lpad:hpad] * weights[i]
+            stack[xlow:xhigh, tsel] += tstack * weights[i]
+    if verbose:
+        sys.stderr.write('\n')
+        sys.stderr.flush()
 
     # Smooth results.
     if smooth > 0:
@@ -110,7 +159,8 @@ def truth_vs_pdf(vals, errs, pdfs, pdict, weights=None, pdf_thresh=1e-3,
     stack[stack < plot_thresh] = np.nan
     plt.imshow(stack.T, origin='lower', aspect='auto',
                extent=(pdict.grid[0], pdict.grid[-1],
-                       pdict.grid[0], pdict.grid[-1]), cmap=cmap)
+                       pdict.grid[0], pdict.grid[-1]), cmap=cmap,
+               **plot_kwargs)
     plt.colorbar(label='PDF')
     plt.plot([0, 100], [0, 100], 'k--', lw=3)  # 1:1 relation
     plt.xlim([pdict.grid[0], pdict.grid[-1]])
