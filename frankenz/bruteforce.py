@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Oject used to fit data and compute PDFs using brute-force methods.
+Object used to fit data and compute PDFs using brute-force methods.
 
 """
 

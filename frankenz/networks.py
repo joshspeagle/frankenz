@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
-Oject used to fit data and compute PDFs using brute-force methods.
+Objects used to fit data and compute PDFs using a modified nearest-neighbor
+approach based on adaptive networks.
 
 """
 

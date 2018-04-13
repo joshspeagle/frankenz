@@ -2,7 +2,8 @@
 # -*- coding: utf-8 -*-
 
 """
-Oject used to fit data and compute PDFs using brute-force methods.
+Object used to fit data and compute PDFs using a modified k-nearest neighbors
+approach based on Monte Carlo methods.
 
 """
 
