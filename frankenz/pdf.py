@@ -16,7 +16,7 @@ import warnings
 import math
 import numpy as np
 import warnings
-from scipy.special import erf
+from scipy.special import erf, xlogy, gammaln
 
 __all__ = ["_loglike", "_loglike_s", "loglike",
            "gaussian", "gaussian_bin", "gauss_kde", "gauss_kde_dict",
@@ -56,8 +56,8 @@ def _loglike(data, data_err, data_mask, models, models_err, models_mask,
 
     dim_prior : bool, optional
         Whether to apply a dimensional-based correction (prior) to the
-        log-likelihood to "normalize" results to be (roughly) dimensionally
-        invariant. Default is `True`.
+        log-likelihood. Transforms the likelihood to a Gamma distribution
+        with shape parameter `a = Nfilt / 2.`. Default is `True`.
 
     Returns
     -------
@@ -82,21 +82,22 @@ def _loglike(data, data_err, data_mask, models, models_err, models_mask,
     tot_mask = data_mask * models_mask  # combined binary mask
     Ndim = np.sum(tot_mask, axis=1)  # number of dimensions
 
-    # Compute normalization.
-    lnl_norm = -0.5 * (Ndim * np.log(2. * np.pi) +
-                       np.sum(np.log(tot_var), axis=1))
-
     # Compute chi2.
     resid = data - models  # residuals
     chi2 = np.sum(tot_mask * np.square(resid) / tot_var, axis=1)  # chi2
-    lnl = -0.5 * chi2  # contribution of chi2 to ln(like)
 
     # Apply dimensionality prior.
     if dim_prior:
-        # Normalize by P(n) = exp(-n/2) * (1 / (sqrt(e) - 1)).
-        lnl += (-0.5 * Ndim) - np.log(np.sqrt(np.e) - 1.)
+        # Compute logpdf of Gamma(Ndim/2) distribution.
+        a = 0.5 * Ndim  # shape parameter
+        lnl = xlogy(a - 1., chi2) - chi2 - gammaln(a)
+    else:
+        # Compute logpdf of multivariate normal.
+        lnl = -0.5 * chi2
+        lnl += -0.5 * (Ndim * np.log(2. * np.pi) +
+                       np.sum(np.log(tot_var), axis=1))
 
-    return lnl + lnl_norm, Ndim, chi2
+    return lnl, Ndim, chi2
 
 
 def _loglike_s(data, data_err, data_mask, models, models_err, models_mask,
@@ -132,8 +133,8 @@ def _loglike_s(data, data_err, data_mask, models, models_err, models_mask,
 
     dim_prior : bool, optional
         Whether to apply a dimensional-based correction (prior) to the
-        log-likelihood to "normalize" results to be (roughly) dimensionally
-        invariant. Default is `True`.
+        log-likelihood. Transforms the likelihood to a Gamma distribution
+        with shape parameter `a = (Nfilt - 1.) /2.`. Default is `True`.
 
     ltol : float, optional
         The fractional tolerance in the log-likelihood function used to
@@ -182,11 +183,11 @@ def _loglike_s(data, data_err, data_mask, models, models_err, models_mask,
     # Compute chi2.
     resid = data - scale[:, None] * models  # scaled residuals
     chi2 = np.sum(tot_mask * np.square(resid) / tot_var, axis=1)  # chi2
-    lnl = -0.5 * chi2  # contribution of chi2 to ln(likelihood)
 
-    # Compute normalization.
-    lnl_norm = -0.5 * (Ndim * np.log(2. * np.pi) +
-                       np.sum(np.log(tot_var), axis=1))
+    # Compute multivariate normal logpdf.
+    lnl = -0.5 * chi2
+    lnl += -0.5 * (Ndim * np.log(2. * np.pi) +
+                   np.sum(np.log(tot_var), axis=1))
 
     # Iterate until convergence if we don't ignore model errors.
     if ignore_model_err is not True:
@@ -204,30 +205,29 @@ def _loglike_s(data, data_err, data_mask, models, models_err, models_mask,
             # Compute new chi2.
             resid = data - scale_new[:, None] * models
             chi2 = np.sum(tot_mask * np.square(resid) / tot_var, axis=1)
-            lnl_new = -0.5 * chi2
 
-            # Compute normalization.
-            lnl_norm_new = -0.5 * (Ndim * np.log(2. * np.pi) +
-                                   np.sum(np.log(tot_var), axis=1))
+            # Compute new logpdf.
+            lnl_new = -0.5 * chi2
+            lnl_new += -0.5 * (Ndim * np.log(2. * np.pi) +
+                               np.sum(np.log(tot_var), axis=1))
 
             # Check tolerance.
-            loglike_err = ((lnl_new + lnl_norm_new - lnl - lnl_norm) /
-                           (lnl + lnl_norm))
+            loglike_err = ((lnl_new - lnl) / lnl)
             lerr = max(abs(loglike_err))
 
             # Assign new values.
-            lnl, lnl_norm, scale = lnl_new, lnl_norm_new, scale_new
+            lnl, scale = lnl_new, scale_new
 
     # Apply dimensionality prior.
     if dim_prior:
-        # Normalize by P(n) = exp(-n/2) * (sqrt(e) / (sqrt(e) - 1)),
-        # where n = dof = Ndim-1.
-        lnl += (-0.5 * (Ndim - 1)) + (0.5 - np.log(np.sqrt(np.e) - 1.))
+        # Compute logpdf of Gamma(Ndim/2) distribution.
+        a = 0.5 * (Ndim - 1)  # shape parameter
+        lnl = xlogy(a - 1., chi2) - chi2 - gammaln(a)
 
     if return_scale:
-        return lnl + lnl_norm, Ndim, chi2, scale
+        return lnl, Ndim, chi2, scale
     else:
-        return lnl + lnl_norm, Ndim, chi2
+        return lnl, Ndim, chi2
 
 
 def loglike(data, data_err, data_mask, models, models_err, models_mask,
@@ -267,8 +267,8 @@ def loglike(data, data_err, data_mask, models, models_err, models_mask,
 
     dim_prior : bool, optional
         Whether to apply a dimensional-based correction (prior) to the
-        log-likelihood to "normalize" results to be (roughly) dimensionally
-        invariant. Default is `True`.
+        log-likelihood. Transforms the likelihood to a Gamma distribution
+        with shape parameter `a = dof /2.`. Default is `True`.
 
     ltol : float, optional
         The fractional tolerance in the log-likelihood function used to
