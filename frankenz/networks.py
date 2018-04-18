@@ -27,10 +27,95 @@ try:
 except ImportError:
     from scipy.misc import logsumexp
 
-__all__ = ["SelfOrganizingMap", "GrowingNeuralGas", "_Network"]
+__all__ = ["SelfOrganizingMap", "GrowingNeuralGas", "_Network",
+           "learn_linear", "learn_geometric", "learn_harmonic",
+           "neighbor_gauss", "neighbor_lorentz", "lprob_train"]
 
 
-class _Network():
+def learn_linear(t, start=1., end=0.2, *args, **kwargs):
+    """
+    The linear learning rate between `start` and `end` at time `t`.
+
+    """
+
+    rate = (1. - t) * start + t * end
+
+    return rate
+
+
+def learn_geometric(t, start=1., end=0.2, *args, **kwargs):
+    """
+    The geometric learning rate between `start` and `end` at time `t`.
+
+    """
+
+    ln_rate = (1. - t) * np.log(start) + t * np.log(end)
+
+    return np.exp(ln_rate)
+
+
+def learn_harmonic(t, start=1., end=0.2, *args, **kwargs):
+    """
+    The weighted harmonic mean between `start` and `end` at time `t`.
+
+    """
+
+    inv_rate = (1. - t) / start + t / end
+
+    return 1. / inv_rate
+
+
+def neighbor_gauss(t, pos, positions, nside, start=0.7, end=0.05,
+                   rate='harmonic', *args, **kwargs):
+    """
+    Compute distances between `pos` to `positions` using a Gaussian kernel
+    with a standard deviation between `start * nside` to `end * nside`
+    at time `t` based on the provided `rate` option.
+
+    """
+
+    if rate == 'linear':
+        learn_func = learn_linear
+    elif rate == 'geometric':
+        learn_func = learn_geometric
+    elif rate == 'harmonic':
+        learn_func = learn_harmonic
+    else:
+        raise ValueError("Provided `rate` is not supported.")
+
+    if nside is None:
+        nside = np.sqrt(len(positions))
+    sqdist = np.sum((pos - positions)**2, axis=1)
+    sigma = learn_func(t, start=start, end=end) * nside
+
+    return np.exp(-0.5 * sqdist / sigma**2)
+
+
+def neighbor_lorentz(t, pos, positions, nside, start=0.7, end=0.05,
+                     rate='harmonic', *args, **kwargs):
+    """
+    Compute distances between `pos` to `positions` using a Lorentzian kernel
+    with a standard deviation between `start * nside` to `end * nside`
+    at time `t` based on the provided `rate` option.
+
+    """
+
+    if rate == 'linear':
+        learn_func = learn_linear
+    elif rate == 'geometric':
+        learn_func = learn_geometric
+    elif rate == 'harmonic':
+        learn_func = learn_harmonic
+    else:
+        raise ValueError("Provided `rate` is not supported.")
+
+    sqdist = np.sum((pos - positions)**2, axis=1)
+    sigma = learn_func(t, start=start, end=end) * nside
+
+    return sigma**2 / (sqdist + sigma**2)
+
+
+class _Network(object):
     """
     Fits data and generates predictions using a network of nodes (models)
     and the data used to train it.
@@ -39,8 +124,7 @@ class _Network():
 
     def __init__(self, models, models_err, models_mask):
         """
-        Load the model data into memory. This will be replaced by child
-        classes.
+        Load the model data into memory.
 
         Parameters
         ----------
@@ -60,6 +144,9 @@ class _Network():
         self.models_err = models_err
         self.models_mask = models_mask
         self.NMODEL, self.NDIM = models.shape
+        self.models_lmap = np.zeros(self.NMODEL) - np.inf
+        self.models_levid = np.zeros(self.NMODEL) - np.inf
+
         self.fit_lnprior = None
         self.fit_lnlike = None
         self.fit_lnprob = None
@@ -74,11 +161,197 @@ class _Network():
         self.nodes_scales = None
         self.nodes_Nmatch = None
         self.nodes_only = None
-        self.NNODE = None
-        self.NPROJ = None
+        self.NNODE, self.NPROJ = None, None
 
         self.neighbors = None
         self.Nneighbors = None
+
+    def populate_network(self, lprob_func=None, discrete=False,
+                         wt_thresh=1e-3, cdf_thresh=2e-4, lprob_args=None,
+                         lprob_kwargs=None, track_scale=False, verbose=True):
+        """
+        Map input models onto the nodes of the network.
+
+        Parameters
+        ----------
+        lprob_func : str or func, optional
+            Log-posterior function to be used. Must return ln(prior), ln(like),
+            ln(post), Ndim, chi2, and (optionally) scale. If not provided,
+            `~frankenz.pdf.loglike` will be used.
+
+        discrete : bool, optional
+            Whether to map objects back to the best-fitting node **only**,
+            rather than assigning them to multiple nodes along with their
+            relevant weights. Default is `False`.
+
+        wt_thresh : float, optional
+            The threshold `wt_thresh * max(y_wt)` used to ignore nodes
+            with (relatively) negligible weights. Default is `1e-3`.
+
+        cdf_thresh : float, optional
+            The `1 - cdf_thresh` threshold of the (sorted) CDF used to ignore
+            nodes with (relatively) negligible weights. This option is only
+            used when `wt_thresh=None`. Default is `2e-4`.
+
+        lprob_args : args, optional
+            Arguments to be passed to `lprob_func`.
+
+        lprob_kwargs : kwargs, optional
+            Keyword arguments to be passed to `lprob_func`.
+
+        track_scale : bool, optional
+            Whether `lprob_func` also returns the scale-factor. Default is
+            `False`.
+
+        verbose : bool, optional
+            Whether to print progress to `~sys.stderr`. Default is `True`.
+
+        """
+
+        # Initialize values.
+        if lprob_func is None:
+            def lprob_train(x, xe, xm, ys, yes, yms):
+                results = loglike(x, xe, xm, ys, yes, yms)
+                lnlike, ndim, chi2 = results
+                return 0., lnlike, lnlike, ndim, chi2
+            lprob_func = lprob_train
+        if lprob_args is None:
+            lprob_args = []
+        if lprob_kwargs is None:
+            lprob_kwargs = dict()
+        if wt_thresh is None and cdf_thresh is None:
+            wt_thresh = -np.inf  # default to no clipping/thresholding
+
+        # Populate network with models.
+        Nmodels = self.NMODEL
+        percentage = -99
+        populate = self._populate_network
+        for i, results in enumerate(populate(lprob_func=lprob_func,
+                                             discrete=discrete,
+                                             wt_thresh=wt_thresh,
+                                             cdf_thresh=cdf_thresh,
+                                             lprob_args=lprob_args,
+                                             lprob_kwargs=lprob_kwargs,
+                                             track_scale=track_scale)):
+            new_percentage = int((i+1) / Nmodels * 100)
+            if verbose and new_percentage != percentage:
+                percentage = new_percentage
+                sys.stderr.write('\rMapping objects {:d}%'
+                                 .format(percentage))
+                sys.stderr.flush()
+        if verbose:
+            sys.stderr.write('\n')
+            sys.stderr.flush()
+
+    def _populate_network(self, lprob_func=None, discrete=False,
+                          wt_thresh=1e-3, cdf_thresh=2e-4, lprob_args=None,
+                          lprob_kwargs=None, track_scale=False):
+        """
+        Internal generator used by the network to map models onto nodes.
+
+        Parameters
+        ----------
+        lprob_func : str or func, optional
+            Log-posterior function to be used. Must return ln(prior), ln(like),
+            ln(post), Ndim, chi2, and (optionally) scale. If not provided,
+            `~frankenz.pdf.loglike` will be used.
+
+        discrete : bool, optional
+            Whether to map objects back to the best-fitting node **only**,
+            rather than assigning them to multiple nodes along with their
+            relevant weights. Default is `False`.
+
+        wt_thresh : float, optional
+            The threshold `wt_thresh * max(y_wt)` used to ignore nodes
+            with (relatively) negligible weights. Default is `1e-3`.
+
+        cdf_thresh : float, optional
+            The `1 - cdf_thresh` threshold of the (sorted) CDF used to ignore
+            nodes with (relatively) negligible weights. This option is only
+            used when `wt_thresh=None`. Default is `2e-4`.
+
+        lprob_args : args, optional
+            Arguments to be passed to `lprob_func`.
+
+        lprob_kwargs : kwargs, optional
+            Keyword arguments to be passed to `lprob_func`.
+
+        track_scale : bool, optional
+            Whether `lprob_func` also returns the scale-factor. Default is
+            `False`.
+
+        """
+
+        # Initialize values.
+        if lprob_func is None:
+            def lprob_train(x, xe, xm, ys, yes, yms):
+                results = loglike(x, xe, xm, ys, yes, yms)
+                lnlike, ndim, chi2 = results
+                return 0., lnlike, lnlike, ndim, chi2
+            lprob_func = lprob_train
+        if lprob_args is None:
+            lprob_args = []
+        if lprob_kwargs is None:
+            lprob_kwargs = dict()
+        if wt_thresh is None and cdf_thresh is None:
+            wt_thresh = -np.inf  # default to no clipping/thresholding
+        self.lprob_func = lprob_func
+
+        Nnodes, Nmodels = self.NNODE, self.NMODEL
+        self.nodes_idxs = [[] for i in range(Nnodes)]
+        self.nodes_logwts = [[] for i in range(Nnodes)]
+        self.nodes_scales = [[] for i in range(Nnodes)]
+        self.nodes_Nmatch = np.zeros(Nnodes, dtype='int')
+
+        y = self.nodes
+        ye = np.zeros_like(y)
+        ym = np.ones_like(y, dtype='bool')
+
+        # Map models to nodes.
+        for i, (x, xe, xm) in enumerate(zip(self.models, self.models_err,
+                                            self.models_mask)):
+
+            # Fit network.
+            node_results = lprob_func(x, xe, xm, y, ye, ym,
+                                      *lprob_args, **lprob_kwargs)
+            node_lnprob = node_results[2]
+
+            # Find the set of node(s) the model maps to.
+            if discrete:
+                # If discrete, assign to the best-matching node.
+                n_idxs = np.array([np.argmax(node_lnprob)])
+            else:
+                # Apply thresholding to get set of probabilistic associations.
+                if wt_thresh is not None:
+                    # Use relative amplitude to threshold.
+                    lwt_min = np.log(wt_thresh) + np.max(node_lnprob)
+                    n_idxs = np.arange(Nnodes)[node_lnprob > lwt_min]
+                else:
+                    # Use CDF to threshold.
+                    idx_sort = np.argsort(node_lnprob)
+                    node_prob = np.exp(node_lnprob - logsumexp(node_lnprob))
+                    node_cdf = np.cumsum(node_prob[idx_sort])
+                    n_idxs = idx_sort[node_cdf <= (1. - cdf_thresh)]
+            # Compute normalized ln(weights).
+            n_lnprobs = node_lnprob[n_idxs]
+            n_lmap, n_levid = max(n_lnprobs), logsumexp(n_lnprobs)
+            n_lnprobs -= n_levid
+            self.models_lmap[i] = n_lmap
+            self.models_levid[i] = n_levid
+            # Compute scale-factors.
+            if track_scale:
+                n_scales = node_results[5][n_idxs]
+            else:
+                n_scales = np.ones_like(n_idxs)
+
+            # Assign model to node(s).
+            for j, lwt, s in zip(n_idxs, n_lnprobs, n_scales):
+                self.nodes_idxs[j].append(i)
+                self.nodes_logwts[j].append(lwt)
+                self.nodes_scales[j].append(s)
+                self.nodes_Nmatch[j] += 1
+
+            yield n_idxs, n_lnprobs, n_scales
 
     def get_node(self, idx=None, pos=None):
         """
@@ -126,7 +399,7 @@ class _Network():
                 label_dict=None, label_grid=None, kde_args=None,
                 kde_kwargs=None, return_gof=False):
         """
-        Returns quantities associated with the given node.
+        Returns PDF associated with the given node.
 
         Parameters
         ----------
@@ -181,18 +454,26 @@ class _Network():
         Nidx = self.nodes_Nmatch[idx]  # number of models
         idxs = self.nodes_idxs[idx]  # model indices
         lwt = self.nodes_logwts[idx]  # model ln(wts)
-        lmap, levid = max(lwt), logsumexp(lwt)  # model GOF metrics
-        wt = np.exp(lwt - levid)
-        if label_dict is not None:
-            # Use dictionary if available.
-            y_idx, y_std_idx = label_dict.fit(model_labels, model_label_errs)
-            pdf = gauss_kde_dict(label_dict, y_idx=y_idx[idxs],
-                                 y_std_idx=y_std_idx[idxs], y_wt=wt,
-                                 *kde_args, **kde_kwargs)
+        if Nidx > 0:
+            lmap, levid = max(lwt), logsumexp(lwt)  # model GOF metrics
+            wt = np.exp(lwt - levid)
+            if label_dict is not None:
+                # Use dictionary if available.
+                y_idx, y_std_idx = label_dict.fit(model_labels,
+                                                  model_label_errs)
+                pdf = gauss_kde_dict(label_dict, y_idx=y_idx[idxs],
+                                     y_std_idx=y_std_idx[idxs], y_wt=wt,
+                                     *kde_args, **kde_kwargs)
+            else:
+                # Otherwise just use KDE.
+                pdf = gauss_kde(model_labels[idxs], model_label_errs[idxs],
+                                label_grid, y_wt=wt, *kde_args, **kde_kwargs)
         else:
-            # Otherwise just use KDE.
-            pdf = gauss_kde(model_labels[idxs], model_label_errs[idxs],
-                            label_grid, y_wt=wt, *kde_args, **kde_kwargs)
+            lmap, levid = -np.inf, -np.inf
+            if label_dict is not None:
+                pdf = np.zeros_like(label_dict.grid)
+            else:
+                pdf = np.zeros_like(label_grid)
 
         if return_gof:
             return pdf, (lmap, levid)
@@ -345,21 +626,29 @@ class _Network():
             Nidx = self.nodes_Nmatch[i]  # number of models
             idxs = self.nodes_idxs[i]  # model indices
             lwt = self.nodes_logwts[i]  # model ln(wts)
-            lmap, levid = max(lwt), logsumexp(lwt)
-            wt = np.exp(lwt - levid)
-            if label_dict is not None:
-                # Use dictionary if available.
-                pdf = gauss_kde_dict(label_dict, y_idx=y_idx[idxs],
-                                     y_std_idx=y_std_idx[idxs], y_wt=wt,
-                                     *kde_args, **kde_kwargs)
+            if Nidx > 0:
+                lmap, levid = max(lwt), logsumexp(lwt)
+                wt = np.exp(lwt - levid)
+                if label_dict is not None:
+                    # Use dictionary if available.
+                    pdf = gauss_kde_dict(label_dict, y_idx=y_idx[idxs],
+                                         y_std_idx=y_std_idx[idxs], y_wt=wt,
+                                         *kde_args, **kde_kwargs)
+                else:
+                    # Otherwise just use KDE.
+                    pdf = gauss_kde(model_labels[idxs], model_label_errs[idxs],
+                                    label_grid, y_wt=wt, *kde_args,
+                                    **kde_kwargs)
             else:
-                # Otherwise just use KDE.
-                pdf = gauss_kde(model_labels[idxs], model_label_errs[idxs],
-                                label_grid, y_wt=wt, *kde_args, **kde_kwargs)
+                lmap, levid = -np.inf, -np.inf
+                if label_dict is not None:
+                    pdf = np.zeros_like(label_dict.grid)
+                else:
+                    pdf = np.zeros_like(label_grid)
 
             yield pdf, (lmap, levid)
 
-    def fit(self, data, data_err, data_mask, lprob_func, nodes_only=False,
+    def fit(self, data, data_err, data_mask, lprob_func=None, nodes_only=False,
             wt_thresh=1e-3, cdf_thresh=2e-4, lprob_args=None,
             lprob_kwargs=None, track_scale=False, verbose=True):
         """
@@ -379,7 +668,8 @@ class _Network():
 
         lprob_func : str or func, optional
             Log-posterior function to be used. Must return ln(prior), ln(like),
-            ln(post), Ndim, chi2, and (optionally) scale.
+            ln(post), Ndim, chi2, and (optionally) scale. If not provided,
+            the function used to train the map will be used.
 
         nodes_only : bool, optional
             Whether to only fit the nodes of the network, ignoring the
@@ -410,6 +700,8 @@ class _Network():
         """
 
         # Initialize values.
+        if lprob_func is None:
+            lprob_func = self.lprob_func
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
@@ -420,7 +712,7 @@ class _Network():
 
         # Fit data.
         for i, results in enumerate(self._fit(data, data_err, data_mask,
-                                              lprob_func,
+                                              lprob_func=lprob_func,
                                               nodes_only=nodes_only,
                                               wt_thresh=wt_thresh,
                                               cdf_thresh=cdf_thresh,
@@ -434,9 +726,9 @@ class _Network():
             sys.stderr.write('\n')
             sys.stderr.flush()
 
-    def _fit(self, data, data_err, data_mask, lprob_func, nodes_only=False,
-             wt_thresh=1e-3, cdf_thresh=2e-4, lprob_args=None,
-             lprob_kwargs=None, track_scale=False):
+    def _fit(self, data, data_err, data_mask, lprob_func=None,
+             nodes_only=False, wt_thresh=1e-3, cdf_thresh=2e-4,
+             lprob_args=None, lprob_kwargs=None, track_scale=False):
         """
         Internal generator used to compute fits.
 
@@ -453,7 +745,8 @@ class _Network():
 
         lprob_func : str or func, optional
             Log-posterior function to be used. Must return ln(prior), ln(like),
-            ln(post), Ndim, chi2, and (optionally) scale.
+            ln(post), Ndim, chi2, and (optionally) scale. If not provided,
+            the function used to train the map will be used.
 
         nodes_only : bool, optional
             Whether to only fit the nodes of the network, ignoring the
@@ -486,6 +779,8 @@ class _Network():
         """
 
         # Initialize values.
+        if lprob_func is None:
+            lprob_func = self.lprob_func
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
@@ -508,11 +803,9 @@ class _Network():
         y = self.nodes
         ye = np.zeros_like(y)
         ym = np.ones_like(y, dtype='bool')
+        match_sel = np.arange(Nnodes)[self.nodes_Nmatch > 0]
 
-        if nodes_only:
-            self.nodes_only = True
-        else:
-            self.nodes_only = False
+        self.nodes_only = nodes_only
 
         # Fit data.
         for i, (x, xe, xm) in enumerate(zip(data, data_err, data_mask)):
@@ -526,13 +819,13 @@ class _Network():
             if wt_thresh is not None:
                 # Use relative amplitude to threshold.
                 lwt_min = np.log(wt_thresh) + np.max(node_lnprob)
-                sel_arr = np.arange(Nnodes)[node_lnprob > lwt_min]
+                sel_arr = match_sel[node_lnprob > lwt_min]
             else:
                 # Use CDF to threshold.
-                idx_sort = np.argsort(y_wt)
+                idx_sort = np.argsort(node_lnprob)
                 node_prob = np.exp(node_lnprob - logsumexp(node_lnprob))
                 node_cdf = np.cumsum(node_prob[idx_sort])
-                sel_arr = idx_sort[node_cdf <= (1. - cdf_thresh)]
+                sel_arr = match_sel[idx_sort[node_cdf <= (1. - cdf_thresh)]]
 
             if nodes_only:
                 # Take our nodes to be our models.
@@ -541,8 +834,8 @@ class _Network():
                 results = [x[sel_arr] for x in node_results]
             else:
                 # Unique neighbor selection based on network fits.
-                indices = np.array([idx for idx in self.nodes_idxs[sidx]
-                                    for sidx in sel_arr])
+                indices = np.array([idx for sidx in sel_arr
+                                    for idx in self.nodes_idxs[sidx]])
                 idxs = unique(indices)
                 Nidx = len(idxs)
                 self.Nneighbors[i] = Nidx
@@ -732,7 +1025,7 @@ class _Network():
             idxs = self.neighbors[i]  # model indices
             lmap, levid = max(lwt), logsumexp(lwt)
             wt = np.exp(lwt - levid)
-            if self.nodes_only:
+            if node_pdfs is not None:
                 # Stack node PDFs based on their relative weights.
                 pdf = np.dot(wt, node_pdfs[idxs, :])
             elif label_dict is not None:
@@ -748,8 +1041,8 @@ class _Network():
 
             yield pdf, (lmap, levid)
 
-    def fit_predict(self, data, data_err, data_mask, lprob_func,
-                    model_labels, model_label_errs, nodes_only=False,
+    def fit_predict(self, data, data_err, data_mask, model_labels,
+                    model_label_errs, lprob_func=None, nodes_only=False,
                     wt_thresh=1e-3, cdf_thresh=2e-4,
                     label_dict=None, label_grid=None, kde_args=None,
                     kde_kwargs=None, lprob_args=None, lprob_kwargs=None,
@@ -770,15 +1063,16 @@ class _Network():
         data_mask : `~numpy.ndarray` of shape (Ndata, Nfilt)
             Binary mask (0/1) indicating whether the data value was observed.
 
-        lprob_func : str or func, optional
-            Log-posterior function to be used. Must return ln(prior), ln(like),
-            ln(post), Ndim, chi2, and (optionally) scale.
-
         model_labels : `~numpy.ndarray` of shape (Nmodel)
             Model values.
 
         model_label_errs : `~numpy.ndarray` of shape (Nmodel)
             Associated errors on the data values.
+
+        lprob_func : str or func, optional
+            Log-posterior function to be used. Must return ln(prior), ln(like),
+            ln(post), Ndim, chi2, and (optionally) scale. If not provided,
+            the function used to train the map will be used.
 
         nodes_only : bool, optional
             Whether to only fit the nodes of the network, ignoring the
@@ -833,6 +1127,8 @@ class _Network():
         """
 
         # Initialize values.
+        if lprob_func is None:
+            lprob_func = self.lprob_func
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
@@ -867,8 +1163,9 @@ class _Network():
 
         # Generate PDFs.
         for i, res in enumerate(self._fit_predict(data, data_err, data_mask,
-                                                  lprob_func, model_labels,
+                                                  model_labels,
                                                   model_label_errs,
+                                                  lprob_func=lprob_func,
                                                   node_pdfs=node_pdfs,
                                                   wt_thresh=wt_thresh,
                                                   cdf_thresh=cdf_thresh,
@@ -897,8 +1194,8 @@ class _Network():
         else:
             return pdfs
 
-    def _fit_predict(self, data, data_err, data_mask, lprob_func,
-                     model_labels, model_label_errs, node_pdfs=None,
+    def _fit_predict(self, data, data_err, data_mask, model_labels,
+                     model_label_errs, lprob_func=None, node_pdfs=None,
                      wt_thresh=1e-3, cdf_thresh=2e-4,
                      label_dict=None, label_grid=None, kde_args=None,
                      kde_kwargs=None, lprob_args=None, lprob_kwargs=None,
@@ -917,15 +1214,16 @@ class _Network():
         data_mask : `~numpy.ndarray` of shape (Ndata, Nfilt)
             Binary mask (0/1) indicating whether the data value was observed.
 
-        lprob_func : str or func, optional
-            Log-posterior function to be used. Must return ln(prior), ln(like),
-            ln(post), Ndim, chi2, and (optionally) scale.
-
         model_labels : `~numpy.ndarray` of shape (Nmodel)
             Model values.
 
         model_label_errs : `~numpy.ndarray` of shape (Nmodel)
             Associated errors on the data values.
+
+        lprob_func : str or func, optional
+            Log-posterior function to be used. Must return ln(prior), ln(like),
+            ln(post), Ndim, chi2, and (optionally) scale. If not provided,
+            the function used to train the map will be used.
 
         node_pdfs : `~numpy.ndarray` of shape (Nnodes, Ngrid), optional
             The effective PDFs at each node. If `nodes_only=True` when
@@ -973,6 +1271,8 @@ class _Network():
         """
 
         # Initialize values.
+        if lprob_func is None:
+            lprob_func = self.lprob_func
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
@@ -993,6 +1293,7 @@ class _Network():
         y = self.nodes
         ye = np.zeros_like(y)
         ym = np.ones_like(y, dtype='bool')
+        match_sel = np.arange(Nnodes)[self.nodes_Nmatch > 0]
 
         if save_fits:
             self.NDATA = Ndata
@@ -1011,21 +1312,21 @@ class _Network():
             # Fit network.
             node_results = lprob_func(x, xe, xm, y, ye, ym,
                                       *lprob_args, **lprob_kwargs)
-            node_lnprob = node_results[2]
+            node_lnprob = node_results[2][match_sel]
 
             # Apply thresholding.
             if wt_thresh is not None:
                 # Use relative amplitude to threshold.
                 lwt_min = np.log(wt_thresh) + np.max(node_lnprob)
-                sel_arr = np.arange(Nnodes)[node_lnprob > lwt_min]
+                sel_arr = match_sel[node_lnprob > lwt_min]
             else:
                 # Use CDF to threshold.
-                idx_sort = np.argsort(y_wt)
+                idx_sort = np.argsort(node_lnprob)
                 node_prob = np.exp(node_lnprob - logsumexp(node_lnprob))
                 node_cdf = np.cumsum(node_prob[idx_sort])
-                sel_arr = idx_sort[node_cdf <= (1. - cdf_thresh)]
+                sel_arr = match_sel[idx_sort[node_cdf <= (1. - cdf_thresh)]]
 
-            if nodes_only:
+            if node_pdfs is not None:
                 # Take our nodes to be our models.
                 idxs = sel_arr
                 results = [x[idxs] for x in node_results]
@@ -1034,8 +1335,8 @@ class _Network():
                     self.neighbors.append(np.array(idxs))
             else:
                 # Unique neighbor selection based on network fits.
-                indices = np.array([idx for idx in self.nodes_idxs[sidx]
-                                    for sidx in sel_arr])
+                indices = np.array([idx for sidx in sel_arr
+                                    for idx in self.nodes_idxs[sidx]])
                 idxs = unique(indices)
                 Nidx = len(idxs)
                 if save_fits:
@@ -1060,7 +1361,7 @@ class _Network():
             lnprob = results[2]  # reduced set of posteriors
             lmap, levid = max(lnprob), logsumexp(lnprob)
             wt = np.exp(lnprob - levid)
-            if self.nodes_only:
+            if node_pdfs is not None:
                 # Stack node PDFs based on their relative weights.
                 pdf = np.dot(wt, node_pdfs[idxs, :])
             elif label_dict is not None:
@@ -1083,7 +1384,14 @@ class SelfOrganizingMap(_Network):
 
     """
 
-    def __init__(self, models, models_err, models_mask):
+    def __init__(self, models, models_err, models_mask, train=True,
+                 err_kernel=None, lprob_func=None, nside=50, nproj=2,
+                 nodes_init=None, niter=2000, nbatch=50, learn_func=None,
+                 neighbor_func=None, populate=True, discrete=False,
+                 wt_thresh=1e-3, cdf_thresh=2e-4, rstate=None,
+                 lprob_args=None, lprob_kwargs=None, track_scale=False,
+                 learn_args=None, learn_kwargs=None, neighbor_args=None,
+                 neighbor_kwargs=None, verbose=True, *args, **kwargs):
         """
         Load the model data into memory and train the SOM.
 
@@ -1098,49 +1406,467 @@ class SelfOrganizingMap(_Network):
         models_mask : `~numpy.ndarray` of shape (Nmodel, Nfilt)
             Binary mask (0/1) indicating whether the model value was observed.
 
+        train : bool, optional
+            Whether to train the SOM using the provided models upon
+            initialization. Default is `True`.
+
+        err_kernel : `~numpy.ndarray` of shape (Nmodel, Nfilt), optional
+            An error kernel added in quadrature to the provided
+            `models_err` used when training the SOM.
+
+        lprob_func : str or func, optional
+            Log-posterior function to be used. Must return ln(prior), ln(like),
+            ln(post), Ndim, chi2, and (optionally) scale. If not provided,
+            `~frankenz.pdf.loglike` will be used.
+
+        nside : int, optional
+            The number of nodes used to specify each side of the SOM.
+            Default is `50`.
+
+        nproj : int, optional
+            The number of projected dimensions used to specify the positions
+            of the nodes of the network. Default is `2`.
+
+        nodes_init : `~numpy.ndarray` of shape (nside**nproj, Nfilt)
+            A set of initial values used to initialize each of the nodes.
+            If not provided, nodes will be initialized randomly from the data.
+
+        niter : int, optional
+            The number of iterations to train the SOM. Default is `2000`.
+
+        nbatch : int, optional
+            The number of objects used in a given iteration. Default is `50`.
+
+        learn_func : func, optional
+            A function that returns the learning rate as a function of
+            fractional iteration (i.e. from `[0., 1.]`). By default,
+            the geometric learning rate function `learn_harmonic` is used.
+
+        neighbor_func : func, optional
+            A function that returns the weights for nodes in the neighborhood
+            of the best-matching node. By default, the Gaussian neighborhood
+            function `neighbor_gauss` is used.
+
+        populate : bool, optional
+            Whether to populate the SOM with the training (model) objects
+            after training upon initialization. Default is `True`.
+
+        discrete : bool, optional
+            Whether to map objects back to the best-fitting node **only**,
+            rather than assigning them to multiple nodes along with their
+            relevant weights. Default is `False`.
+
+        wt_thresh : float, optional
+            The threshold `wt_thresh * max(y_wt)` used to ignore nodes
+            with (relatively) negligible weights. Default is `1e-3`.
+
+        cdf_thresh : float, optional
+            The `1 - cdf_thresh` threshold of the (sorted) CDF used to ignore
+            nodes with (relatively) negligible weights. This option is only
+            used when `wt_thresh=None`. Default is `2e-4`.
+
+        rstate : `~numpy.random.RandomState` instance, optional
+            Random state instance. If not passed, the default `~numpy.random`
+            instance will be used.
+
+        lprob_args : args, optional
+            Arguments to be passed to `lprob_func`.
+
+        lprob_kwargs : kwargs, optional
+            Keyword arguments to be passed to `lprob_func`.
+
+        track_scale : bool, optional
+            Whether `lprob_func` also returns the scale-factor. Default is
+            `False`.
+
+        learn_args : args, optional
+            Arguments to be passed to `learn_func`.
+
+        learn_kwargs : kwargs, optional
+            Keyword arguments to be passed to `learn_func`.
+
+        neighbor_args : args, optional
+            Arguments to be passed to `neighbor_func`.
+
+        neighbor_kwargs : kwargs, optional
+            Keyword arguments to be passed to `neighbor_func`.
+
+        verbose : bool, optional
+            Whether to print progress to `~sys.stderr`. Default is `True`.
+
         """
 
         # Initialize values.
-        self.models = models
-        self.models_err = models_err
-        self.models_mask = models_mask
-        self.NMODEL, self.NDIM = models.shape
-        self.fit_lnprior = None
-        self.fit_lnlike = None
-        self.fit_lnprob = None
-        self.fit_Ndim = None
-        self.fit_chi2 = None
-        self.fit_scale = None
+        super(SelfOrganizingMap, self).__init__(models, models_err,
+                                                models_mask)  # _Network
+        if lprob_func is None:
+            def lprob_train(x, xe, xm, ys, yes, yms):
+                results = loglike(x, xe, xm, ys, yes, yms)
+                lnlike, ndim, chi2 = results
+                return 0., lnlike, lnlike, ndim, chi2
+            lprob_func = lprob_train
+        if lprob_args is None:
+            lprob_args = []
+        if lprob_kwargs is None:
+            lprob_kwargs = dict()
+        if learn_func is None:
+            learn_func = learn_harmonic
+        if learn_args is None:
+            learn_args = []
+        if learn_kwargs is None:
+            learn_kwargs = dict()
+        if neighbor_func is None:
+            neighbor_func = neighbor_gauss
+        if neighbor_args is None:
+            neighbor_args = []
+        if neighbor_kwargs is None:
+            neighbor_kwargs = dict()
+        if rstate is None:
+            rstate = np.random
 
-        self.nodes = None
-        self.nodes_pos = None
-        self.nodes_idxs = None
-        self.nodes_logwts = None
-        self.nodes_scales = None
-        self.nodes_Nmatch = None
-        self.nodes_only = None
-        self.NNODE = None
-        self.NPROJ = None
+        # Train network.
+        if train:
+            self.train_network(nside=nside, nproj=nproj, nodes_init=nodes_init,
+                               niter=niter, nbatch=nbatch,
+                               learn_func=learn_func, verbose=verbose,
+                               neighbor_func=neighbor_func,
+                               wt_thresh=wt_thresh, cdf_thresh=cdf_thresh,
+                               rstate=rstate, lprob_func=lprob_func,
+                               lprob_args=lprob_args, err_kernel=err_kernel,
+                               lprob_kwargs=lprob_kwargs,
+                               track_scale=track_scale, learn_args=learn_args,
+                               learn_kwargs=learn_kwargs,
+                               neighbor_args=neighbor_args,
+                               neighbor_kwargs=neighbor_kwargs)
 
-        self.neighbors = None
-        self.Nneighbors = None
+        # Populate network.
+        if train and populate:
+            self.populate_network(lprob_func=lprob_func, discrete=discrete,
+                                  wt_thresh=wt_thresh, cdf_thresh=cdf_thresh,
+                                  lprob_args=lprob_args,
+                                  lprob_kwargs=lprob_kwargs,
+                                  track_scale=track_scale, verbose=verbose)
 
-    def _train_network(self):
+    def train_network(self, nside=50, nproj=2, nodes_init=None, niter=2000,
+                      nbatch=50, err_kernel=None, lprob_func=None,
+                      learn_func=None, neighbor_func=None,
+                      wt_thresh=1e-3, cdf_thresh=2e-4, rstate=None,
+                      lprob_args=None, lprob_kwargs=None, track_scale=False,
+                      learn_args=None, learn_kwargs=None, neighbor_args=None,
+                      neighbor_kwargs=None, verbose=True):
+        """
+        Train the SOM using the initialized set of models.
+
+        Parameters
+        ----------
+        nside : int, optional
+            The number of nodes used to specify each side of the SOM.
+            Default is `50`.
+
+        nproj : int, optional
+            The number of projected dimensions used to specify the positions
+            of the nodes of the network. Default is `2`.
+
+        nodes_init : `~numpy.ndarray` of shape (nside**nproj, Nfilt)
+            A set of initial values used to initialize each of the nodes.
+            If not provided, nodes will be initialized randomly from the data.
+
+        niter : int, optional
+            The number of iterations to train the SOM. Default is `2000`.
+
+        nbatch : int, optional
+            The number of objects used in a given iteration. Default is `50`.
+
+        err_kernel : `~numpy.ndarray` of shape (Nmodel, Nfilt), optional
+            An error kernel added in quadrature to the provided
+            `models_err` used when training the SOM.
+
+        lprob_func : str or func, optional
+            Log-posterior function to be used. Must return ln(prior), ln(like),
+            ln(post), Ndim, chi2, and (optionally) scale. If not provided,
+            `~frankenz.pdf.loglike` will be used.
+
+        learn_func : func, optional
+            A function that returns the learning rate as a function of
+            fractional iteration (i.e. from `[0., 1.]`). By default,
+            the geometric learning rate function `learn_harmonic` is used.
+
+        neighbor_func : func, optional
+            A function that returns the weights for nodes in the neighborhood
+            of the best-matching node. By default, the Gaussian neighborhood
+            function `neighbor_gauss` is used.
+
+        wt_thresh : float, optional
+            The threshold `wt_thresh * max(y_wt)` used to ignore nodes
+            with (relatively) negligible weights. Default is `1e-3`.
+
+        cdf_thresh : float, optional
+            The `1 - cdf_thresh` threshold of the (sorted) CDF used to ignore
+            nodes with (relatively) negligible weights. This option is only
+            used when `wt_thresh=None`. Default is `2e-4`.
+
+        rstate : `~numpy.random.RandomState` instance, optional
+            Random state instance. If not passed, the default `~numpy.random`
+            instance will be used.
+
+        lprob_args : args, optional
+            Arguments to be passed to `lprob_func`.
+
+        lprob_kwargs : kwargs, optional
+            Keyword arguments to be passed to `lprob_func`.
+
+        track_scale : bool, optional
+            Whether `lprob_func` also returns the scale-factor. Default is
+            `False`.
+
+        learn_args : args, optional
+            Arguments to be passed to `learn_func`.
+
+        learn_kwargs : kwargs, optional
+            Keyword arguments to be passed to `learn_func`.
+
+        neighbor_args : args, optional
+            Arguments to be passed to `neighbor_func`.
+
+        neighbor_kwargs : kwargs, optional
+            Keyword arguments to be passed to `neighbor_func`.
+
+        verbose : bool, optional
+            Whether to print progress to `~sys.stderr`. Default is `True`.
+
+        """
+
+        # Initialize values.
+        if lprob_func is None:
+            def lprob_train(x, xe, xm, ys, yes, yms):
+                results = loglike(x, xe, xm, ys, yes, yms)
+                lnlike, ndim, chi2 = results
+                return 0., lnlike, lnlike, ndim, chi2
+            lprob_func = lprob_train
+        if lprob_args is None:
+            lprob_args = []
+        if lprob_kwargs is None:
+            lprob_kwargs = dict()
+        if learn_func is None:
+            learn_func = learn_harmonic
+        if learn_args is None:
+            learn_args = []
+        if learn_kwargs is None:
+            learn_kwargs = dict()
+        if neighbor_func is None:
+            neighbor_func = neighbor_gauss
+        if neighbor_args is None:
+            neighbor_args = []
+        if neighbor_kwargs is None:
+            neighbor_kwargs = dict()
+        if rstate is None:
+            rstate = np.random
+
+        # Load in models.
+        models = self.models
+        models_mask = self.models_mask
+        if err_kernel is not None:
+            models_err = np.sqrt(self.models_err**2 + err_kernel**2)
+        else:
+            models_err = self.models_err
+
+        # Initialize SOM node positions.
+        self.NSIDE, self.NNODE, self.NPROJ = nside, nside**nproj, nproj
+        self.nodes_pos = np.zeros((self.NNODE, self.NPROJ))
+        for i in range(self.NPROJ):
+            counter = int(self.NNODE / self.NSIDE**(i+1))
+            n = int(self.NNODE / counter)
+            for k, j in enumerate(range(n)):
+                self.nodes_pos[j*counter:(j+1)*counter, i] = k % self.NSIDE
+
+        # Initialize SOM node models.
+        self.nodes = np.zeros((self.NNODE, self.NDIM))
+        if nodes_init is None:
+            idxs = rstate.choice(self.NMODEL, size=self.NNODE, replace=False)
+            self.nodes = np.array(models[idxs])
+        else:
+            self.nodes = nodes_init
+
+        # Train the SOM.
+        train = self._train_network
+        for i, res in enumerate(train(models, models_err, models_mask,
+                                      lprob_func=lprob_func,
+                                      learn_func=learn_func,
+                                      neighbor_func=neighbor_func,
+                                      niter=niter, nbatch=nbatch,
+                                      wt_thresh=wt_thresh,
+                                      cdf_thresh=cdf_thresh,
+                                      rstate=rstate,
+                                      lprob_args=lprob_args,
+                                      lprob_kwargs=lprob_kwargs,
+                                      track_scale=track_scale,
+                                      learn_args=learn_args,
+                                      learn_kwargs=learn_kwargs,
+                                      neighbor_args=neighbor_args,
+                                      neighbor_kwargs=neighbor_kwargs)):
+            fits, bmu, learn_rate, learn_wt = res
+            if i % nbatch == 0 and verbose:
+                sys.stderr.write('\rIteration {0}/{1} '
+                                 .format(int(i/nbatch) + 1, niter))
+                sys.stderr.flush()
+        if verbose:
+            sys.stderr.write('\n')
+            sys.stderr.flush()
+
+    def _train_network(self, models, models_err, models_mask, lprob_func=None,
+                       learn_func=None, neighbor_func=None, niter=2000,
+                       nbatch=50, wt_thresh=1e-3, cdf_thresh=2e-4, rstate=None,
+                       lprob_args=None, lprob_kwargs=None, track_scale=False,
+                       learn_args=None, learn_kwargs=None, neighbor_args=None,
+                       neighbor_kwargs=None):
         """
         Internal method used to train the SOM.
 
+        Parameters
+        ----------
+        models : `~numpy.ndarray` of shape (Nmodel, Nfilt)
+            Model values.
+
+        models_err : `~numpy.ndarray` of shape (Nmodel, Nfilt)
+            Associated errors on the model values.
+
+        models_mask : `~numpy.ndarray` of shape (Nmodel, Nfilt)
+            Binary mask (0/1) indicating whether the model value was observed.
+
+        lprob_func : str or func, optional
+            Log-posterior function to be used. Must return ln(prior), ln(like),
+            ln(post), Ndim, chi2, and (optionally) scale. If not provided,
+            `~frankenz.pdf.loglike` will be used.
+
+        learn_func : func, optional
+            A function that returns the learning rate as a function of
+            fractional iteration (i.e. from `[0., 1.]`). By default,
+            the geometric learning rate function `learn_harmonic` is used.
+
+        neighbor_func : func, optional
+            A function that returns the weights for nodes in the neighborhood
+            of the best-matching node. By default, the Gaussian neighborhood
+            function `neighbor_gauss` is used.
+
+        niter : int, optional
+            The number of iterations to train the SOM. Default is `2000`.
+
+        nbatch : int, optional
+            The number of objects used in a given iteration. Default is `50`.
+
+        wt_thresh : float, optional
+            The threshold `wt_thresh * max(y_wt)` used to ignore nodes
+            with (relatively) negligible weights. Default is `1e-3`.
+
+        cdf_thresh : float, optional
+            The `1 - cdf_thresh` threshold of the (sorted) CDF used to ignore
+            nodes with (relatively) negligible weights. This option is only
+            used when `wt_thresh=None`. Default is `2e-4`.
+
+        rstate : `~numpy.random.RandomState` instance, optional
+            Random state instance. If not passed, the default `~numpy.random`
+            instance will be used.
+
+        lprob_args : args, optional
+            Arguments to be passed to `lprob_func`.
+
+        lprob_kwargs : kwargs, optional
+            Keyword arguments to be passed to `lprob_func`.
+
+        track_scale : bool, optional
+            Whether `lprob_func` also returns the scale-factor. Default is
+            `False`.
+
+        learn_args : args, optional
+            Arguments to be passed to `learn_func`.
+
+        learn_kwargs : kwargs, optional
+            Keyword arguments to be passed to `learn_func`.
+
+        neighbor_args : args, optional
+            Arguments to be passed to `neighbor_func`.
+
+        neighbor_kwargs : kwargs, optional
+            Keyword arguments to be passed to `neighbor_func`.
+
         """
 
-        pass
+        # Initialize values.
+        self.NITER, self.NBATCH = niter, nbatch
+        times = np.linspace(0., 1., niter * nbatch)
+        if lprob_func is None:
+            def lprob_train(x, xe, xm, ys, yes, yms):
+                results = loglike(x, xe, xm, ys, yes, yms)
+                lnlike, ndim, chi2 = results
+                return 0., lnlike, lnlike, ndim, chi2
+            lprob_func = lprob_train
+        if lprob_args is None:
+            lprob_args = []
+        if lprob_kwargs is None:
+            lprob_kwargs = dict()
+        if learn_func is None:
+            learn_func = learn_harmonic
+        if learn_args is None:
+            learn_args = []
+        if learn_kwargs is None:
+            learn_kwargs = dict()
+        if neighbor_func is None:
+            neighbor_func = neighbor_gauss
+        if neighbor_args is None:
+            neighbor_args = []
+        if neighbor_kwargs is None:
+            neighbor_kwargs = dict()
+        if rstate is None:
+            rstate = np.random
+        if wt_thresh is None and cdf_thresh is None:
+            wt_thresh = -np.inf  # default to no clipping/thresholding
 
-    def _populate_network(self):
-        """
-        Internal method used to map the models back onto the resulting nodes
-        of the SOM.
+        y = self.nodes
+        ye = np.zeros_like(y)
+        ym = np.ones_like(y, dtype='bool')
 
-        """
+        # Train the network.
+        for i, t in enumerate(times):
 
-        pass
+            # Draw object.
+            idx = rstate.choice(self.NMODEL)
+
+            # Fit network.
+            node_results = lprob_func(self.models[idx], self.models_err[idx],
+                                      self.models_mask[idx], y, ye, ym,
+                                      *lprob_args, **lprob_kwargs)
+            node_lnprob = node_results[2]
+
+            # Rescale models (if needed).
+            if track_scale:
+                node_scales = node_results[5]
+                self.nodes *= node_scales[:, None]  # re-scale node models
+
+            # Find the "best-matching unit".
+            bmu = np.argmax(node_lnprob)
+
+            # Compute learning parameters.
+            learn_rate = learn_func(t, *learn_args, **learn_kwargs)
+            learn_wt = neighbor_func(t, self.nodes_pos[bmu],
+                                     self.nodes_pos, self.NSIDE,
+                                     *neighbor_args, **neighbor_kwargs)
+
+            # Use relative amplitude to threshold.
+            if wt_thresh is not None:
+                wt_min = wt_thresh * np.max(learn_wt)
+                n_idxs = np.arange(self.NNODE)[learn_wt > wt_min]
+            else:
+                # Use CDF to threshold.
+                idx_sort = np.argsort(learn_wt)
+                node_prob = learn_wt / np.sum(learn_wt)
+                node_cdf = np.cumsum(node_prob[idx_sort])
+                n_idxs = idx_sort[node_cdf <= (1. - cdf_thresh)]
+
+            # Update SOM.
+            resid = self.models[idx] - self.nodes[n_idxs]
+            self.nodes[n_idxs] += learn_rate * learn_wt[n_idxs, None] * resid
+
+            yield node_results, bmu, learn_rate, learn_wt
 
 
 class GrowingNeuralGas(_Network):
@@ -1167,51 +1893,20 @@ class GrowingNeuralGas(_Network):
         """
 
         # Initialize values.
-        self.models = models
-        self.models_err = models_err
-        self.models_mask = models_mask
-        self.NMODEL, self.NDIM = models.shape
-        self.fit_lnprior = None
-        self.fit_lnlike = None
-        self.fit_lnprob = None
-        self.fit_Ndim = None
-        self.fit_chi2 = None
-        self.fit_scale = None
+        super(SelfOrganizingMap, self).__init__(models, models_err,
+                                                models_mask)  # _Network
 
-        self.nodes = None
-        self.nodes_pos = None
-        self.nodes_idxs = None
-        self.nodes_logwts = None
-        self.nodes_scales = None
-        self.nodes_Nmatch = None
-        self.nodes_only = None
-        self.NNODE = None
-        self.NPROJ = None
+    def train_network(self):
+        """
+        Method used to train the GNG.
 
-        self.neighbors = None
-        self.Nneighbors = None
+        """
+
+        pass
 
     def _train_network(self):
         """
         Internal method used to train the GNG.
-
-        """
-
-        pass
-
-    def _populate_network(self):
-        """
-        Internal method used to map the models back onto the resulting nodes
-        of the GNG.
-
-        """
-
-        pass
-
-    def _project_network(self):
-        """
-        Internal method used to project the GNG onto a lower dimensional
-        subspace.
 
         """
 

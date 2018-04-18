@@ -185,7 +185,7 @@ class NearestNeighbors():
 
             yield kdtree
 
-    def fit(self, data, data_err, data_mask, lprob_func, rstate=None,
+    def fit(self, data, data_err, data_mask, lprob_func=None, rstate=None,
             k=20, eps=1e-3, lp_norm=2, distance_upper_bound=np.inf,
             lprob_args=None, lprob_kwargs=None, track_scale=False,
             verbose=True):
@@ -206,7 +206,8 @@ class NearestNeighbors():
 
         lprob_func : str or func, optional
             Log-posterior function to be used. Must return ln(prior), ln(like),
-            ln(post), Ndim, chi2, and (optionally) scale.
+            ln(post), Ndim, chi2, and (optionally) scale. If not provided,
+            `~frankenz.pdf.loglike` will be used.
 
         rstate : `~numpy.random.RandomState` instance, optional
             Random state instance. If not passed, the default `~numpy.random`
@@ -246,6 +247,12 @@ class NearestNeighbors():
         """
 
         # Initialize values.
+        if lprob_func is None:
+            def lprob_train(x, xe, xm, ys, yes, yms):
+                results = loglike(x, xe, xm, ys, yes, yms)
+                lnlike, ndim, chi2 = results
+                return 0., lnlike, lnlike, ndim, chi2
+            lprob_func = lprob_train
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
@@ -260,7 +267,8 @@ class NearestNeighbors():
 
         # Fit data.
         for i, results in enumerate(self._fit(data, data_err, data_mask,
-                                              lprob_func, rstate=rstate,
+                                              lprob_func=lprob_func,
+                                              rstate=rstate,
                                               lprob_args=lprob_args,
                                               lprob_kwargs=lprob_kwargs,
                                               track_scale=track_scale)):
@@ -271,7 +279,7 @@ class NearestNeighbors():
             sys.stderr.write('\n')
             sys.stderr.flush()
 
-    def _fit(self, data, data_err, data_mask, lprob_func, rstate=None,
+    def _fit(self, data, data_err, data_mask, lprob_func=None, rstate=None,
              lprob_args=None, lprob_kwargs=None, track_scale=False):
         """
         Internal generator used to compute fits.
@@ -289,7 +297,8 @@ class NearestNeighbors():
 
         lprob_func : str or func, optional
             Log-posterior function to be used. Must return ln(prior), ln(like),
-            ln(prob), Ndim, chi2, and (optionally) scale.
+            ln(post), Ndim, chi2, and (optionally) scale. If not provided,
+            `~frankenz.pdf.loglike` will be used.
 
         rstate : `~numpy.random.RandomState` instance, optional
             Random state instance. If not passed, the default `~numpy.random`
@@ -313,6 +322,12 @@ class NearestNeighbors():
         """
 
         # Initialize values.
+        if lprob_func is None:
+            def lprob_train(x, xe, xm, ys, yes, yms):
+                results = loglike(x, xe, xm, ys, yes, yms)
+                lnlike, ndim, chi2 = results
+                return 0., lnlike, lnlike, ndim, chi2
+            lprob_func = lprob_train
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
@@ -534,8 +549,8 @@ class NearestNeighbors():
 
             yield pdf, (lmap, levid)
 
-    def fit_predict(self, data, data_err, data_mask, lprob_func,
-                    model_labels, model_label_errs, rstate=None,
+    def fit_predict(self, data, data_err, data_mask, model_labels,
+                    model_label_errs, lprob_func=None, rstate=None,
                     k=20, eps=1e-3, lp_norm=2, distance_upper_bound=np.inf,
                     label_dict=None, label_grid=None, kde_args=None,
                     kde_kwargs=None, lprob_args=None, lprob_kwargs=None,
@@ -556,15 +571,16 @@ class NearestNeighbors():
         data_mask : `~numpy.ndarray` of shape (Ndata, Nfilt)
             Binary mask (0/1) indicating whether the data value was observed.
 
-        lprob_func : str or func, optional
-            Log-posterior function to be used. Must return ln(prior), ln(like),
-            ln(post), Ndim, chi2, and (optionally) scale.
-
         model_labels : `~numpy.ndarray` of shape (Nmodel)
             Model values.
 
         model_label_errs : `~numpy.ndarray` of shape (Nmodel)
             Associated errors on the data values.
+
+        lprob_func : str or func, optional
+            Log-posterior function to be used. Must return ln(prior), ln(like),
+            ln(post), Ndim, chi2, and (optionally) scale. If not provided,
+            `~frankenz.pdf.loglike` will be used.
 
         rstate : `~numpy.random.RandomState` instance, optional
             Random state instance. If not passed, the default `~numpy.random`
@@ -636,6 +652,12 @@ class NearestNeighbors():
         """
 
         # Initialize values.
+        if lprob_func is None:
+            def lprob_train(x, xe, xm, ys, yes, yms):
+                results = loglike(x, xe, xm, ys, yes, yms)
+                lnlike, ndim, chi2 = results
+                return 0., lnlike, lnlike, ndim, chi2
+            lprob_func = lprob_train
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
@@ -664,8 +686,9 @@ class NearestNeighbors():
 
         # Generate PDFs.
         for i, res in enumerate(self._fit_predict(data, data_err, data_mask,
-                                                  lprob_func, model_labels,
+                                                  model_labels,
                                                   model_label_errs,
+                                                  lprob_func=lprob_func,
                                                   rstate=rstate,
                                                   label_dict=label_dict,
                                                   label_grid=label_grid,
@@ -692,8 +715,8 @@ class NearestNeighbors():
         else:
             return pdfs
 
-    def _fit_predict(self, data, data_err, data_mask, lprob_func,
-                     model_labels, model_label_errs, rstate=None,
+    def _fit_predict(self, data, data_err, data_mask, model_labels,
+                     model_label_errs, lprob_func=None, rstate=None,
                      label_dict=None, label_grid=None, kde_args=None,
                      kde_kwargs=None, lprob_args=None, lprob_kwargs=None,
                      track_scale=False, save_fits=True):
@@ -711,15 +734,16 @@ class NearestNeighbors():
         data_mask : `~numpy.ndarray` of shape (Ndata, Nfilt)
             Binary mask (0/1) indicating whether the data value was observed.
 
-        lprob_func : str or func, optional
-            Log-posterior function to be used. Must return ln(prior), ln(like),
-            ln(post), Ndim, chi2, and (optionally) scale.
-
         model_labels : `~numpy.ndarray` of shape (Nmodel)
             Model values.
 
         model_label_errs : `~numpy.ndarray` of shape (Nmodel)
             Associated errors on the data values.
+
+        lprob_func : str or func, optional
+            Log-posterior function to be used. Must return ln(prior), ln(like),
+            ln(post), Ndim, chi2, and (optionally) scale. If not provided,
+            `~frankenz.pdf.loglike` will be used.
 
         rstate : `~numpy.random.RandomState` instance, optional
             Random state instance. If not passed, the default `~numpy.random`
@@ -765,6 +789,12 @@ class NearestNeighbors():
         """
 
         # Initialize values.
+        if lprob_func is None:
+            def lprob_train(x, xe, xm, ys, yes, yms):
+                results = loglike(x, xe, xm, ys, yes, yms)
+                lnlike, ndim, chi2 = results
+                return 0., lnlike, lnlike, ndim, chi2
+            lprob_func = lprob_train
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:

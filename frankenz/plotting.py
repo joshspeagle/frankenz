@@ -19,7 +19,7 @@ import warnings
 from matplotlib import pyplot as plt
 from scipy.ndimage.filters import gaussian_filter
 
-__all__ = ["truth_vs_pdf"]
+__all__ = ["truth_vs_pdf", "cdf_vs_epdf", "cdf_vs_ecdf"]
 
 
 def truth_vs_pdf(vals, errs, pdfs, pdict, weights=None, pdf_wt_thresh=1e-3,
@@ -44,7 +44,7 @@ def truth_vs_pdf(vals, errs, pdfs, pdict, weights=None, pdf_wt_thresh=1e-3,
         Dictionary used to compute the PDFs.
 
     weights : `~numpy.ndarray` with shape (Nobj,), optional
-        An array used to re-weighted the corresponding PDFs.
+        An array used to re-weight the corresponding PDFs.
         Default is `None`.
 
     pdf_wt_thresh : float, optional
@@ -170,3 +170,164 @@ def truth_vs_pdf(vals, errs, pdfs, pdict, weights=None, pdf_wt_thresh=1e-3,
     plt.tight_layout()
 
     return stack
+
+
+def cdf_vs_epdf(vals, errs, pdfs, pdf_grid, Nmc=100, weights=None, Nbins=50,
+                plot_kwargs=None, rstate=None, *args, **kwargs):
+    """
+    Plot CDF draws vs the empirical PDF (i.e. normalized counts).
+
+    Parameters
+    ----------
+    vals : `~numpy.ndarray` with shape (Nobj,)
+        Truth values.
+
+    errs : `~numpy.ndarray` with shape (Nobj,)
+        Errors on the truth values (or smoothing scales).
+
+    pdfs : `~numpy.ndarray` with shape (Nobj, Ngrid)
+        PDFs for each object corresponding to the truth values.
+
+    pdf_grid : `~numpy.ndarray` with shape (Ngrid)
+        Grid used to compute the PDFs.
+
+    Nmc : int, optional
+        The number of Monte Carlo realizations of the true value(s) if the
+        provided error(s) are non-zero. Default is `100`.
+
+    weights : `~numpy.ndarray` with shape (Nobj,), optional
+        An array used to re-weight the corresponding PDFs.
+        Default is `None`.
+
+    Nbins : int, optional
+        The number of bins used for plotting. Default is `50`.
+
+    plot_kwargs : kwargs, optional
+        Keyword arguments to be passed to `~matplotlib.pyplot.hist`.
+
+    rstate : `~numpy.random.RandomState` instance, optional
+        Random state instance. If not passed, the default `~numpy.random`
+        instance will be used.
+
+    Returns
+    -------
+    counts : `~numpy.ndarray` with shape (Nbins)
+        Effective number of counts in each bin.
+
+    """
+
+    # Initialize values
+    Ngrid, Nobj = len(pdf_grid), len(vals)
+    if plot_kwargs is None:
+        plot_kwargs = dict()
+        plot_kwargs['color'] = 'blue'
+        plot_kwargs['alpha'] = 0.6
+    if rstate is None:
+        rstate = np.random
+    if weights is None:
+        weights = np.ones(Nobj, dtype='float32')
+    weights = np.array([np.tile(float(w), Nmc) for w in weights]).flatten()
+
+    # Compute CDF values
+    cdf_draws = np.zeros((Nobj, Nmc))
+    for i, (val, err, pdf) in enumerate(zip(vals, errs, pdfs)):
+        cdf = pdf.cumsum()
+        cdf /= cdf[-1]
+        if err > 0:
+            mcvals = rstate.normal(val, err, size=Nmc)
+        else:
+            mcvals = np.tile(val, Nmc)
+        cdf_draws[i] = np.interp(mcvals, pdf_grid, cdf)
+    cdf_draws = cdf_draws.flatten()
+
+    # Plot result.
+    n, _, _ = plt.hist(cdf_draws, bins=np.linspace(0., 1., Nbins + 1),
+                       weights=weights, normed=True, **plot_kwargs)
+    plt.xlabel('CDF Draws')
+    plt.ylabel('Normalized Counts')
+
+    return n
+
+
+def cdf_vs_ecdf(vals, errs, pdfs, pdf_grid, Nmc=100, weights=None,
+                plot_kwargs=None, rstate=None, *args, **kwargs):
+    """
+    Plot CDF draws vs the empirical PDF (i.e. normalized counts).
+
+    Parameters
+    ----------
+    vals : `~numpy.ndarray` with shape (Nobj,)
+        Truth values.
+
+    errs : `~numpy.ndarray` with shape (Nobj,)
+        Errors on the truth values (or smoothing scales).
+
+    pdfs : `~numpy.ndarray` with shape (Nobj, Ngrid)
+        PDFs for each object corresponding to the truth values.
+
+    pdf_grid : `~numpy.ndarray` with shape (Ngrid)
+        Grid used to compute the PDFs.
+
+    Nmc : int, optional
+        The number of Monte Carlo realizations of the true value(s) if the
+        provided error(s) are non-zero. Default is `100`.
+
+    weights : `~numpy.ndarray` with shape (Nobj,), optional
+        An array used to re-weight the corresponding PDFs.
+        Default is `None`.
+
+    plot_kwargs : kwargs, optional
+        Keyword arguments to be passed to `~matplotlib.pyplot.hist`.
+
+    rstate : `~numpy.random.RandomState` instance, optional
+        Random state instance. If not passed, the default `~numpy.random`
+        instance will be used.
+
+    Returns
+    -------
+    sorted_cdf_draws : `~numpy.ndarray` with shape (Nobj * Nmc)
+        Sorted set of (weighted) CDF draws.
+
+    ecdf : `~numpy.ndarray` with shape (Nobj * Nmc)
+        The empirical sorted (weighted) CDF.
+
+    """
+
+    # Initialize values
+    Ngrid, Nobj = len(pdf_grid), len(vals)
+    if plot_kwargs is None:
+        plot_kwargs = dict()
+        plot_kwargs['color'] = 'blue'
+        plot_kwargs['alpha'] = 0.6
+    if rstate is None:
+        rstate = np.random
+    if weights is None:
+        weights = np.ones(Nobj, dtype='float32')
+    weights = np.array([np.tile(float(w), Nmc) for w in weights]).flatten()
+
+    # Compute CDF values
+    cdf_draws = np.zeros((Nobj, Nmc))
+    for i, (val, err, pdf) in enumerate(zip(vals, errs, pdfs)):
+        cdf = pdf.cumsum()
+        cdf /= cdf[-1]
+        if err > 0:
+            mcvals = rstate.normal(val, err, size=Nmc)
+        else:
+            mcvals = np.tile(val, Nmc)
+        cdf_draws[i] = np.interp(mcvals, pdf_grid, cdf)
+    cdf_draws = cdf_draws.flatten()
+
+    # Compute weighted x and y grids.
+    sort_idx = np.argsort(cdf_draws)
+    cdf_sorted, weights_sorted = cdf_draws[sort_idx], weights[sort_idx]
+    cdf_diff = np.append(cdf_sorted[0], cdf_sorted[1:] - cdf_sorted[:-1])
+    x, y = weights_sorted, weights_sorted * cdf_diff
+    x = x.cumsum() / x.sum()
+    y = y.cumsum() / y.sum()
+
+    # Plot result.
+    plt.plot(x, y, **plot_kwargs)
+    plt.xlabel('Sorted CDF Draws')
+    plt.ylabel('Empirical CDF')
+
+    return x, y

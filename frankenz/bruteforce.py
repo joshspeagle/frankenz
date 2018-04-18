@@ -64,7 +64,7 @@ class BruteForce():
 
         self.NMODEL, self.NDIM = models.shape
 
-    def fit(self, data, data_err, data_mask, lprob_func,
+    def fit(self, data, data_err, data_mask, lprob_func=None,
             lprob_args=None, lprob_kwargs=None, track_scale=False,
             verbose=True):
         """
@@ -84,7 +84,8 @@ class BruteForce():
 
         lprob_func : str or func, optional
             Log-posterior function to be used. Must return ln(prior), ln(like),
-            ln(post), Ndim, chi2, and (optionally) scale.
+            ln(post), Ndim, chi2, and (optionally) scale. If not provided,
+            `~frankenz.pdf.loglike` will be used.
 
         lprob_args : args, optional
             Arguments to be passed to `lprob_func`.
@@ -102,6 +103,12 @@ class BruteForce():
         """
 
         # Initialize values.
+        if lprob_func is None:
+            def lprob_train(x, xe, xm, ys, yes, yms):
+                results = loglike(x, xe, xm, ys, yes, yms)
+                lnlike, ndim, chi2 = results
+                return 0., lnlike, lnlike, ndim, chi2
+            lprob_func = lprob_train
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
@@ -110,7 +117,7 @@ class BruteForce():
 
         # Fit data.
         for i, results in enumerate(self._fit(data, data_err, data_mask,
-                                              lprob_func,
+                                              lprob_func=lprob_func,
                                               lprob_args=lprob_args,
                                               lprob_kwargs=lprob_kwargs,
                                               track_scale=track_scale)):
@@ -121,7 +128,7 @@ class BruteForce():
             sys.stderr.write('\n')
             sys.stderr.flush()
 
-    def _fit(self, data, data_err, data_mask, lprob_func,
+    def _fit(self, data, data_err, data_mask, lprob_func=None,
              lprob_args=None, lprob_kwargs=None, track_scale=False):
         """
         Internal generator used to compute fits.
@@ -139,7 +146,8 @@ class BruteForce():
 
         lprob_func : str or func, optional
             Log-posterior function to be used. Must return ln(prior), ln(like),
-            ln(prob), Ndim, chi2, and (optionally) scale.
+            ln(post), Ndim, chi2, and (optionally) scale. If not provided,
+            `~frankenz.pdf.loglike` will be used.
 
         lprob_args : args, optional
             Arguments to be passed to `lprob_func`.
@@ -159,6 +167,12 @@ class BruteForce():
         """
 
         # Initialize values.
+        if lprob_func is None:
+            def lprob_train(x, xe, xm, ys, yes, yms):
+                results = loglike(x, xe, xm, ys, yes, yms)
+                lnlike, ndim, chi2 = results
+                return 0., lnlike, lnlike, ndim, chi2
+            lprob_func = lprob_train
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
@@ -354,8 +368,8 @@ class BruteForce():
 
             yield pdf, (lmap, levid)
 
-    def fit_predict(self, data, data_err, data_mask, lprob_func,
-                    model_labels, model_label_errs, label_dict=None,
+    def fit_predict(self, data, data_err, data_mask, model_labels,
+                    model_label_errs, lprob_func=None, label_dict=None,
                     label_grid=None, kde_args=None, kde_kwargs=None,
                     lprob_args=None, lprob_kwargs=None, return_gof=False,
                     track_scale=False, verbose=True, save_fits=True):
@@ -374,15 +388,16 @@ class BruteForce():
         data_mask : `~numpy.ndarray` of shape (Ndata, Nfilt)
             Binary mask (0/1) indicating whether the data value was observed.
 
-        lprob_func : str or func, optional
-            Log-posterior function to be used. Must return ln(prior), ln(like),
-            ln(post), Ndim, chi2, and (optionally) scale.
-
         model_labels : `~numpy.ndarray` of shape (Nmodel)
             Model values.
 
         model_label_errs : `~numpy.ndarray` of shape (Nmodel)
             Associated errors on the data values.
+
+        lprob_func : str or func, optional
+            Log-posterior function to be used. Must return ln(prior), ln(like),
+            ln(post), Ndim, chi2, and (optionally) scale. If not provided,
+            `~frankenz.pdf.loglike` will be used.
 
         label_dict : `~frankenz.pdf.PDFDict` object, optional
             Dictionary of pre-computed stationary kernels. If provided,
@@ -432,6 +447,12 @@ class BruteForce():
         """
 
         # Initialize values.
+        if lprob_func is None:
+            def lprob_train(x, xe, xm, ys, yes, yms):
+                results = loglike(x, xe, xm, ys, yes, yms)
+                lnlike, ndim, chi2 = results
+                return 0., lnlike, lnlike, ndim, chi2
+            lprob_func = lprob_train
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
@@ -454,8 +475,9 @@ class BruteForce():
 
         # Generate predictions.
         for i, res in enumerate(self._fit_predict(data, data_err, data_mask,
-                                                  lprob_func, model_labels,
+                                                  model_labels,
                                                   model_label_errs,
+                                                  lprob_func=lprob_func,
                                                   label_dict=label_dict,
                                                   label_grid=label_grid,
                                                   kde_args=kde_args,
@@ -481,8 +503,8 @@ class BruteForce():
         else:
             return pdfs
 
-    def _fit_predict(self, data, data_err, data_mask, lprob_func,
-                     model_labels, model_label_errs, label_dict=None,
+    def _fit_predict(self, data, data_err, data_mask, model_labels,
+                     model_label_errs, lprob_func=None, label_dict=None,
                      label_grid=None, kde_args=None, kde_kwargs=None,
                      lprob_args=None, lprob_kwargs=None,
                      track_scale=False, save_fits=True):
@@ -500,15 +522,16 @@ class BruteForce():
         data_mask : `~numpy.ndarray` of shape (Ndata, Nfilt)
             Binary mask (0/1) indicating whether the data value was observed.
 
-        lprob_func : str or func, optional
-            Log-posterior function to be used. Must return ln(prior), ln(like),
-            ln(post), Ndim, chi2, and (optionally) scale.
-
         model_labels : `~numpy.ndarray` of shape (Nmodel)
             Model values.
 
         model_label_errs : `~numpy.ndarray` of shape (Nmodel)
             Associated errors on the data values.
+
+        lprob_func : str or func, optional
+            Log-posterior function to be used. Must return ln(prior), ln(like),
+            ln(post), Ndim, chi2, and (optionally) scale. If not provided,
+            `~frankenz.pdf.loglike` will be used.
 
         label_dict : `~frankenz.pdf.PDFDict` object, optional
             Dictionary of pre-computed stationary kernels. If provided,
@@ -550,6 +573,12 @@ class BruteForce():
         """
 
         # Initialize values.
+        if lprob_func is None:
+            def lprob_train(x, xe, xm, ys, yes, yms):
+                results = loglike(x, xe, xm, ys, yes, yms)
+                lnlike, ndim, chi2 = results
+                return 0., lnlike, lnlike, ndim, chi2
+            lprob_func = lprob_train
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
