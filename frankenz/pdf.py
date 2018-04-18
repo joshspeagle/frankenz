@@ -56,8 +56,8 @@ def _loglike(data, data_err, data_mask, models, models_err, models_mask,
 
     dim_prior : bool, optional
         Whether to apply a dimensional-based correction (prior) to the
-        log-likelihood. Transforms the likelihood to a Gamma distribution
-        with shape parameter `a = Nfilt / 2.`. Default is `True`.
+        log-likelihood. Transforms the likelihood to a chi2 distribution
+        with `Nfilt` degrees of freedom. Default is `True`.
 
     Returns
     -------
@@ -88,9 +88,9 @@ def _loglike(data, data_err, data_mask, models, models_err, models_mask,
 
     # Apply dimensionality prior.
     if dim_prior:
-        # Compute logpdf of Gamma(Ndim/2) distribution.
-        a = 0.5 * Ndim  # shape parameter
-        lnl = xlogy(a - 1., chi2) - chi2 - gammaln(a)
+        # Compute logpdf of chi2 distribution.
+        a = 0.5 * Ndim  # dof
+        lnl = xlogy(a - 1., chi2) - (chi2 / 2.) - gammaln(a) - (np.log(2.) * a)
     else:
         # Compute logpdf of multivariate normal.
         lnl = -0.5 * chi2
@@ -133,8 +133,8 @@ def _loglike_s(data, data_err, data_mask, models, models_err, models_mask,
 
     dim_prior : bool, optional
         Whether to apply a dimensional-based correction (prior) to the
-        log-likelihood. Transforms the likelihood to a Gamma distribution
-        with shape parameter `a = (Nfilt - 1.) /2.`. Default is `True`.
+        log-likelihood. Transforms the likelihood to a chi2 distribution
+        with `Nfilt - 1` degrees of freedom. Default is `True`.
 
     ltol : float, optional
         The fractional tolerance in the log-likelihood function used to
@@ -220,9 +220,9 @@ def _loglike_s(data, data_err, data_mask, models, models_err, models_mask,
 
     # Apply dimensionality prior.
     if dim_prior:
-        # Compute logpdf of Gamma(Ndim/2) distribution.
-        a = 0.5 * (Ndim - 1)  # shape parameter
-        lnl = xlogy(a - 1., chi2) - chi2 - gammaln(a)
+        # Compute logpdf of chi2 distribution.
+        a = 0.5 * (Ndim - 1)  # dof
+        lnl = xlogy(a - 1., chi2) - (chi2 / 2.) - gammaln(a) - (np.log(2.) * a)
 
     if return_scale:
         return lnl, Ndim, chi2, scale
