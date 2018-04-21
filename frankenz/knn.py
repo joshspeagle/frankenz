@@ -97,6 +97,7 @@ class NearestNeighbors():
         self.fit_Ndim = None
         self.fit_chi2 = None
         self.fit_scale = None
+        self.fit_scale_err = None
 
         self.leafsize = leafsize
         self.K = K
@@ -131,7 +132,8 @@ class NearestNeighbors():
             try:
                 # Check if `feature_map` is a valid function.
                 _ = feature_map(np.atleast_2d(X_train[0]),
-                                np.atleast_2d(Xe_train[0]))
+                                np.atleast_2d(Xe_train[0]),
+                                *fmap_args, **fmap_kwargs)
             except:
                 # If all else fails, raise an exception.
                 raise ValueError("The provided feature map is not valid.")
@@ -206,8 +208,8 @@ class NearestNeighbors():
 
         lprob_func : str or func, optional
             Log-posterior function to be used. Must return ln(prior), ln(like),
-            ln(post), Ndim, chi2, and (optionally) scale. If not provided,
-            `~frankenz.pdf.loglike` will be used.
+            ln(post), Ndim, chi2, and (optionally) scale and std(scale).
+            If not provided, `~frankenz.pdf.loglike` will be used.
 
         rstate : `~numpy.random.RandomState` instance, optional
             Random state instance. If not passed, the default `~numpy.random`
@@ -251,7 +253,7 @@ class NearestNeighbors():
             def lprob_train(x, xe, xm, ys, yes, yms):
                 results = loglike(x, xe, xm, ys, yes, yms)
                 lnlike, ndim, chi2 = results
-                return 0., lnlike, lnlike, ndim, chi2
+                return np.zeros_like(lnlike), lnlike, lnlike, ndim, chi2
             lprob_func = lprob_train
         if lprob_args is None:
             lprob_args = []
@@ -297,8 +299,8 @@ class NearestNeighbors():
 
         lprob_func : str or func, optional
             Log-posterior function to be used. Must return ln(prior), ln(like),
-            ln(post), Ndim, chi2, and (optionally) scale. If not provided,
-            `~frankenz.pdf.loglike` will be used.
+            ln(post), Ndim, chi2, and (optionally) scale and std(scale).
+            If not provided, `~frankenz.pdf.loglike` will be used.
 
         rstate : `~numpy.random.RandomState` instance, optional
             Random state instance. If not passed, the default `~numpy.random`
@@ -326,7 +328,7 @@ class NearestNeighbors():
             def lprob_train(x, xe, xm, ys, yes, yms):
                 results = loglike(x, xe, xm, ys, yes, yms)
                 lnlike, ndim, chi2 = results
-                return 0., lnlike, lnlike, ndim, chi2
+                return np.zeros_like(lnlike), lnlike, lnlike, ndim, chi2
             lprob_func = lprob_train
         if lprob_args is None:
             lprob_args = []
@@ -346,6 +348,7 @@ class NearestNeighbors():
         self.fit_Ndim = np.zeros((Ndata, Nmodels), dtype='int')
         self.fit_chi2 = np.zeros((Ndata, Nmodels), dtype='float') + np.inf
         self.fit_scale = np.ones((Ndata, Nmodels), dtype='float')
+        self.fit_scale_err = np.zeros((Ndata, Nmodels), dtype='float')
 
         # Fit data.
         for i, (x, xe, xm) in enumerate(zip(data, data_err, data_mask)):
@@ -377,6 +380,7 @@ class NearestNeighbors():
             self.fit_chi2[i, :Nidx] = results[4]  # chi2
             if track_scale:
                 self.fit_scale[i, :Nidx] = results[5]  # scale-factor
+                self.fit_scale_err[i, :Nidx] = results[6]  # std(s)
 
             yield results
 
@@ -579,8 +583,8 @@ class NearestNeighbors():
 
         lprob_func : str or func, optional
             Log-posterior function to be used. Must return ln(prior), ln(like),
-            ln(post), Ndim, chi2, and (optionally) scale. If not provided,
-            `~frankenz.pdf.loglike` will be used.
+            ln(post), Ndim, chi2, and (optionally) scale and std(scale).
+            If not provided, `~frankenz.pdf.loglike` will be used.
 
         rstate : `~numpy.random.RandomState` instance, optional
             Random state instance. If not passed, the default `~numpy.random`
@@ -656,7 +660,7 @@ class NearestNeighbors():
             def lprob_train(x, xe, xm, ys, yes, yms):
                 results = loglike(x, xe, xm, ys, yes, yms)
                 lnlike, ndim, chi2 = results
-                return 0., lnlike, lnlike, ndim, chi2
+                return np.zeros_like(lnlike), lnlike, lnlike, ndim, chi2
             lprob_func = lprob_train
         if lprob_args is None:
             lprob_args = []
@@ -742,8 +746,8 @@ class NearestNeighbors():
 
         lprob_func : str or func, optional
             Log-posterior function to be used. Must return ln(prior), ln(like),
-            ln(post), Ndim, chi2, and (optionally) scale. If not provided,
-            `~frankenz.pdf.loglike` will be used.
+            ln(post), Ndim, chi2, and (optionally) scale and std(scale).
+            If not provided, `~frankenz.pdf.loglike` will be used.
 
         rstate : `~numpy.random.RandomState` instance, optional
             Random state instance. If not passed, the default `~numpy.random`
@@ -793,7 +797,7 @@ class NearestNeighbors():
             def lprob_train(x, xe, xm, ys, yes, yms):
                 results = loglike(x, xe, xm, ys, yes, yms)
                 lnlike, ndim, chi2 = results
-                return 0., lnlike, lnlike, ndim, chi2
+                return np.zeros_like(lnlike), lnlike, lnlike, ndim, chi2
             lprob_func = lprob_train
         if lprob_args is None:
             lprob_args = []
@@ -818,6 +822,7 @@ class NearestNeighbors():
             self.fit_Ndim = np.zeros((Ndata, Nmodels), dtype='int')
             self.fit_chi2 = np.zeros((Ndata, Nmodels), dtype='float') + np.inf
             self.fit_scale = np.ones((Ndata, Nmodels), dtype='float')
+            self.fit_scale_err = np.zeros((Ndata, Nmodels), dtype='float')
             self.NDATA = Ndata
         if label_dict is not None:
             y_idx, y_std_idx = label_dict.fit(model_labels, model_label_errs)
@@ -854,6 +859,7 @@ class NearestNeighbors():
                 self.fit_chi2[i, :Nidx] = results[4]  # chi2
                 if track_scale:
                     self.fit_scale[i, :Nidx] = results[5]  # scale-factor
+                    self.fit_scale_err[i, :Nidx] = results[6]  # std(s)
             lnprob = results[2]  # reduced set of posteriors
 
             # Compute PDF.

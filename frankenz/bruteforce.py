@@ -61,6 +61,7 @@ class BruteForce():
         self.fit_Ndim = None
         self.fit_chi2 = None
         self.fit_scale = None
+        self.fit_scale_err = None
 
         self.NMODEL, self.NDIM = models.shape
 
@@ -84,8 +85,8 @@ class BruteForce():
 
         lprob_func : str or func, optional
             Log-posterior function to be used. Must return ln(prior), ln(like),
-            ln(post), Ndim, chi2, and (optionally) scale. If not provided,
-            `~frankenz.pdf.loglike` will be used.
+            ln(post), Ndim, chi2, and (optionally) scale and std(scale).
+            If not provided, `~frankenz.pdf.loglike` will be used.
 
         lprob_args : args, optional
             Arguments to be passed to `lprob_func`.
@@ -107,7 +108,7 @@ class BruteForce():
             def lprob_train(x, xe, xm, ys, yes, yms):
                 results = loglike(x, xe, xm, ys, yes, yms)
                 lnlike, ndim, chi2 = results
-                return 0., lnlike, lnlike, ndim, chi2
+                return np.zeros_like(lnlike), lnlike, lnlike, ndim, chi2
             lprob_func = lprob_train
         if lprob_args is None:
             lprob_args = []
@@ -146,8 +147,8 @@ class BruteForce():
 
         lprob_func : str or func, optional
             Log-posterior function to be used. Must return ln(prior), ln(like),
-            ln(post), Ndim, chi2, and (optionally) scale. If not provided,
-            `~frankenz.pdf.loglike` will be used.
+            ln(post), Ndim, chi2, and (optionally) scale and std(scale).
+            If not provided, `~frankenz.pdf.loglike` will be used.
 
         lprob_args : args, optional
             Arguments to be passed to `lprob_func`.
@@ -171,7 +172,7 @@ class BruteForce():
             def lprob_train(x, xe, xm, ys, yes, yms):
                 results = loglike(x, xe, xm, ys, yes, yms)
                 lnlike, ndim, chi2 = results
-                return 0., lnlike, lnlike, ndim, chi2
+                return np.zeros_like(lnlike), lnlike, lnlike, ndim, chi2
             lprob_func = lprob_train
         if lprob_args is None:
             lprob_args = []
@@ -187,6 +188,7 @@ class BruteForce():
         self.fit_Ndim = np.zeros((Ndata, Nmodels), dtype='int')
         self.fit_chi2 = np.zeros((Ndata, Nmodels), dtype='float')
         self.fit_scale = np.ones((Ndata, Nmodels), dtype='float')
+        self.fit_scale_err = np.zeros((Ndata, Nmodels), dtype='float')
 
         # Fit data.
         for i, (x, xe, xm) in enumerate(zip(data, data_err, data_mask)):
@@ -199,6 +201,7 @@ class BruteForce():
             self.fit_chi2[i] = results[4]  # chi2
             if track_scale:
                 self.fit_scale[i] = results[5]  # scale-factor
+                self.fit_scale_err[i] = results[6]  # std(s)
 
             yield results
 
@@ -396,8 +399,8 @@ class BruteForce():
 
         lprob_func : str or func, optional
             Log-posterior function to be used. Must return ln(prior), ln(like),
-            ln(post), Ndim, chi2, and (optionally) scale. If not provided,
-            `~frankenz.pdf.loglike` will be used.
+            ln(post), Ndim, chi2, and (optionally) scale and std(scale).
+            If not provided, `~frankenz.pdf.loglike` will be used.
 
         label_dict : `~frankenz.pdf.PDFDict` object, optional
             Dictionary of pre-computed stationary kernels. If provided,
@@ -451,7 +454,7 @@ class BruteForce():
             def lprob_train(x, xe, xm, ys, yes, yms):
                 results = loglike(x, xe, xm, ys, yes, yms)
                 lnlike, ndim, chi2 = results
-                return 0., lnlike, lnlike, ndim, chi2
+                return np.zeros_like(lnlike), lnlike, lnlike, ndim, chi2
             lprob_func = lprob_train
         if lprob_args is None:
             lprob_args = []
@@ -530,8 +533,8 @@ class BruteForce():
 
         lprob_func : str or func, optional
             Log-posterior function to be used. Must return ln(prior), ln(like),
-            ln(post), Ndim, chi2, and (optionally) scale. If not provided,
-            `~frankenz.pdf.loglike` will be used.
+            ln(post), Ndim, chi2, and (optionally) scale and std(scale).
+            If not provided, `~frankenz.pdf.loglike` will be used.
 
         label_dict : `~frankenz.pdf.PDFDict` object, optional
             Dictionary of pre-computed stationary kernels. If provided,
@@ -577,7 +580,7 @@ class BruteForce():
             def lprob_train(x, xe, xm, ys, yes, yms):
                 results = loglike(x, xe, xm, ys, yes, yms)
                 lnlike, ndim, chi2 = results
-                return 0., lnlike, lnlike, ndim, chi2
+                return np.zeros_like(lnlike), lnlike, lnlike, ndim, chi2
             lprob_func = lprob_train
         if lprob_args is None:
             lprob_args = []
@@ -598,6 +601,7 @@ class BruteForce():
             self.fit_Ndim = np.zeros((Ndata, Nmodels), dtype='int')
             self.fit_chi2 = np.zeros((Ndata, Nmodels), dtype='float')
             self.fit_scale = np.ones((Ndata, Nmodels), dtype='float')
+            self.fit_scale_err = np.zeros((Ndata, Nmodels), dtype='float')
             self.NDATA = Ndata
         if label_dict is not None:
             y_idx, y_std_idx = label_dict.fit(model_labels, model_label_errs)
@@ -616,6 +620,7 @@ class BruteForce():
                 self.fit_chi2[i] = results[4]  # chi2
                 if track_scale:
                     self.fit_scale[i] = results[5]  # scale-factor
+                    self.fit_scale_err[i] = results[6]  # std(s)
             lnprob = results[2]
 
             # Compute PDF and GOF metrics.

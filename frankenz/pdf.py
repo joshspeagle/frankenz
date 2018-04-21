@@ -101,7 +101,7 @@ def _loglike(data, data_err, data_mask, models, models_err, models_mask,
 
 
 def _loglike_s(data, data_err, data_mask, models, models_err, models_mask,
-               ignore_model_err=False, dim_prior=True, ltol=1e-4,
+               ignore_model_err=False, dim_prior=True, ltol=1e-3,
                return_scale=False, *args, **kwargs):
     """
     Internal function for computing the log-likelihood between noisy
@@ -137,10 +137,10 @@ def _loglike_s(data, data_err, data_mask, models, models_err, models_mask,
         with `Nfilt - 1` degrees of freedom. Default is `True`.
 
     ltol : float, optional
-        The fractional tolerance in the log-likelihood function used to
-        determine convergence when including errors when the scale factor is
+        The tolerance in the log-likelihood function used to
+        determine convergence if including errors when the scale factor is
         left free (i.e. `free_scale = True` and `ignore_model_err = False`).
-        Default is `1e-4`.
+        Default is `1e-3`.
 
     return_scale : bool, optional
         Whether to return the scale factor.
@@ -159,6 +159,10 @@ def _loglike_s(data, data_err, data_mask, models, models_err, models_mask,
 
     scale : `~numpy.ndarray` of shape (Nmodel), optional
         The factor used to scale the model observations to the observed data.
+        Returned if `return_scale = True`.
+
+    scale_err : `~numpy.ndarray` of shape (Nmodel), optional
+        The error on the factor used to scale the model observations.
         Returned if `return_scale = True`.
 
     """
@@ -212,7 +216,7 @@ def _loglike_s(data, data_err, data_mask, models, models_err, models_mask,
                                np.sum(np.log(tot_var), axis=1))
 
             # Check tolerance.
-            loglike_err = ((lnl_new - lnl) / lnl)
+            loglike_err = lnl_new - lnl
             lerr = max(abs(loglike_err))
 
             # Assign new values.
@@ -225,7 +229,8 @@ def _loglike_s(data, data_err, data_mask, models, models_err, models_mask,
         lnl = xlogy(a - 1., chi2) - (chi2 / 2.) - gammaln(a) - (np.log(2.) * a)
 
     if return_scale:
-        return lnl, Ndim, chi2, scale
+        scale_err = np.sqrt(1. / shape_vals)
+        return lnl, Ndim, chi2, scale, scale_err
     else:
         return lnl, Ndim, chi2
 
@@ -665,7 +670,7 @@ def inv_luptitude(mag, err, skynoise=1., zeropoints=1., *args, **kwargs):
 
     # Compute photometry.
     phot = (2. * skynoise) * np.sinh(np.log(10.) / -2.5 * mag -
-                                     np.log(skynoise / zeropoint))
+                                     np.log(skynoise / zeropoints))
 
     # Compute errors.
     phot_err = np.sqrt((np.square(2. * skynoise) + np.square(phot)) *
