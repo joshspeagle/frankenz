@@ -10,6 +10,7 @@ approach based on adaptive networks.
 from __future__ import (print_function, division)
 import six
 from six.moves import range
+from six import iteritems
 
 import sys
 import os
@@ -19,6 +20,7 @@ import numpy as np
 import warnings
 from scipy.spatial import KDTree
 from pandas import unique
+import networkx as nx
 
 from .pdf import *
 
@@ -32,7 +34,7 @@ __all__ = ["SelfOrganizingMap", "GrowingNeuralGas", "_Network",
            "neighbor_gauss", "neighbor_lorentz", "lprob_train"]
 
 
-def learn_linear(t, start=1., end=0.2, *args, **kwargs):
+def learn_linear(t, start=0.5, end=0.1, *args, **kwargs):
     """
     The linear learning rate between `start` and `end` at time `t`.
 
@@ -43,7 +45,7 @@ def learn_linear(t, start=1., end=0.2, *args, **kwargs):
     return rate
 
 
-def learn_geometric(t, start=1., end=0.2, *args, **kwargs):
+def learn_geometric(t, start=0.5, end=0.1, *args, **kwargs):
     """
     The geometric learning rate between `start` and `end` at time `t`.
 
@@ -54,7 +56,7 @@ def learn_geometric(t, start=1., end=0.2, *args, **kwargs):
     return np.exp(ln_rate)
 
 
-def learn_harmonic(t, start=1., end=0.2, *args, **kwargs):
+def learn_harmonic(t, start=0.5, end=0.1, *args, **kwargs):
     """
     The weighted harmonic mean between `start` and `end` at time `t`.
 
@@ -65,7 +67,7 @@ def learn_harmonic(t, start=1., end=0.2, *args, **kwargs):
     return 1. / inv_rate
 
 
-def neighbor_gauss(t, pos, positions, nside, start=0.7, end=0.05,
+def neighbor_gauss(t, pos, positions, nside, start=0.7, end=0.02,
                    rate='harmonic', *args, **kwargs):
     """
     Compute distances between `pos` to `positions` using a Gaussian kernel
@@ -88,10 +90,10 @@ def neighbor_gauss(t, pos, positions, nside, start=0.7, end=0.05,
     sqdist = np.sum((pos - positions)**2, axis=1)
     sigma = learn_func(t, start=start, end=end) * nside
 
-    return np.exp(-0.5 * sqdist / sigma**2)
+    return np.exp(-0.5 * sqdist / sigma**2), sigma
 
 
-def neighbor_lorentz(t, pos, positions, nside, start=0.7, end=0.05,
+def neighbor_lorentz(t, pos, positions, nside, start=0.7, end=0.02,
                      rate='harmonic', *args, **kwargs):
     """
     Compute distances between `pos` to `positions` using a Lorentzian kernel
@@ -112,7 +114,7 @@ def neighbor_lorentz(t, pos, positions, nside, start=0.7, end=0.05,
     sqdist = np.sum((pos - positions)**2, axis=1)
     sigma = learn_func(t, start=start, end=end) * nside
 
-    return sigma**2 / (sqdist + sigma**2)
+    return sigma**2 / (sqdist + sigma**2), sigma
 
 
 class _Network(object):
@@ -160,6 +162,7 @@ class _Network(object):
         self.nodes_idxs = None
         self.nodes_logwts = None
         self.nodes_scales = None
+        self.nodes_scales_err = None
         self.nodes_Nmatch = None
         self.nodes_only = None
         self.NNODE, self.NPROJ = None, None
@@ -302,6 +305,7 @@ class _Network(object):
         self.nodes_idxs = [[] for i in range(Nnodes)]
         self.nodes_logwts = [[] for i in range(Nnodes)]
         self.nodes_scales = [[] for i in range(Nnodes)]
+        self.nodes_scales_err = [[] for i in range(Nnodes)]
         self.nodes_Nmatch = np.zeros(Nnodes, dtype='int')
 
         y = self.nodes
@@ -342,17 +346,21 @@ class _Network(object):
             # Compute scale-factors.
             if track_scale:
                 n_scales = node_results[5][n_idxs]
+                n_scales_err = node_results[6][n_idxs]
             else:
                 n_scales = np.ones_like(n_idxs)
+                n_scales_err = np.zeros_like(n_idxs)
 
             # Assign model to node(s).
-            for j, lwt, s in zip(n_idxs, n_lnprobs, n_scales):
+            for j, lwt, s, serr in zip(n_idxs, n_lnprobs, n_scales,
+                                       n_scales_err):
                 self.nodes_idxs[j].append(i)
                 self.nodes_logwts[j].append(lwt)
                 self.nodes_scales[j].append(s)
+                self.nodes_scales_err[j].append(serr)
                 self.nodes_Nmatch[j] += 1
 
-            yield n_idxs, n_lnprobs, n_scales
+            yield n_idxs, n_lnprobs, n_scales, n_scales_err
 
     def get_node(self, idx=None, pos=None):
         """
@@ -1421,7 +1429,7 @@ class SelfOrganizingMap(_Network):
                       learn_args=None, learn_kwargs=None, neighbor_args=None,
                       neighbor_kwargs=None, verbose=True):
         """
-        Train the SOM using the initialized set of models.
+        Train the SOM using the provided set of models.
 
         Parameters
         ----------
@@ -1568,10 +1576,12 @@ class SelfOrganizingMap(_Network):
                                       learn_kwargs=learn_kwargs,
                                       neighbor_args=neighbor_args,
                                       neighbor_kwargs=neighbor_kwargs)):
-            fits, bmu, learn_rate, learn_wt = res
+            fits, bmu, learn_rate, learn_sigma = res
             if i % nbatch == 0 and verbose:
-                sys.stderr.write('\rIteration {0}/{1} '
-                                 .format(int(i/nbatch) + 1, niter))
+                sys.stderr.write('\rIteration {:d}/{:d} '
+                                 '[learn={:6.3f}, sigma={:6.3f}]     '
+                                 .format(int(i/nbatch) + 1, niter,
+                                         learn_rate, learn_sigma))
                 sys.stderr.flush()
         if verbose:
             sys.stderr.write('\n')
@@ -1710,9 +1720,10 @@ class SelfOrganizingMap(_Network):
                 self.nodes_pos[j*counter:(j+1)*counter, i] = k % self.NSIDE
 
         # Initialize SOM node models.
+        Nmodel = len(models)
         self.nodes = np.zeros((self.NNODE, self.NDIM))
         if nodes_init is None:
-            idxs = rstate.choice(self.NMODEL, size=self.NNODE, replace=False)
+            idxs = rstate.choice(Nmodel, size=self.NNODE, replace=False)
             self.nodes = np.array(models[idxs])
         else:
             self.nodes = nodes_init
@@ -1725,11 +1736,11 @@ class SelfOrganizingMap(_Network):
         for i, t in enumerate(times):
 
             # Draw object.
-            idx = rstate.choice(self.NMODEL)
+            idx = rstate.choice(Nmodel)
+            x, xe, xm = models[idx], models_err[idx], models_mask[idx]
 
             # Fit network.
-            node_results = lprob_func(models[idx], models_err[idx],
-                                      models_mask[idx], y, ye, ym,
+            node_results = lprob_func(x, xe, xm, y, ye, ym,
                                       *lprob_args, **lprob_kwargs)
             node_lnprob = node_results[2]
 
@@ -1743,9 +1754,10 @@ class SelfOrganizingMap(_Network):
 
             # Compute learning parameters.
             learn_rate = learn_func(t, *learn_args, **learn_kwargs)
-            learn_wt = neighbor_func(t, self.nodes_pos[bmu],
-                                     self.nodes_pos, self.NSIDE,
-                                     *neighbor_args, **neighbor_kwargs)
+            learn_wt, learn_sigma = neighbor_func(t, self.nodes_pos[bmu],
+                                                  self.nodes_pos, self.NSIDE,
+                                                  *neighbor_args,
+                                                  **neighbor_kwargs)
 
             # Use relative amplitude to threshold.
             if wt_thresh is not None:
@@ -1762,7 +1774,7 @@ class SelfOrganizingMap(_Network):
             resid = models[idx] - y[n_idxs]
             self.nodes[n_idxs] += learn_rate * learn_wt[n_idxs, None] * resid
 
-            yield node_results, bmu, learn_rate, learn_wt
+            yield node_results, bmu, learn_rate, learn_sigma
 
 
 class GrowingNeuralGas(_Network):
@@ -1789,21 +1801,375 @@ class GrowingNeuralGas(_Network):
         """
 
         # Initialize values.
-        super(SelfOrganizingMap, self).__init__(models, models_err,
-                                                models_mask)  # _Network
+        super(GrowingNeuralGas, self).__init__(models, models_err,
+                                               models_mask)  # _Network
 
-    def train_network(self):
+        self.graph = nx.Graph()
+
+    def train_network(self, models=None, models_err=None, models_mask=None,
+                      learn_best=0.2, learn_neighbor=0.005, max_age=15,
+                      nbatch=50, new_err_dec=0.5, all_err_dec=5e-3,
+                      max_nodes=2500, niter=5000, graph_init=None,
+                      err_kernel=None, lprob_func=None, rstate=None,
+                      lprob_args=None, lprob_kwargs=None, track_scale=False,
+                      verbose=True):
         """
-        Method used to train the GNG.
+        Train the GNG using the provided set of models.
+
+        Parameters
+        ----------
+        models : `~numpy.ndarray` of shape (Nmodel, Nfilt), optional
+            Model values.
+
+        models_err : `~numpy.ndarray` of shape (Nmodel, Nfilt), optional
+            Associated errors on the model values.
+
+        models_mask : `~numpy.ndarray` of shape (Nmodel, Nfilt), optional
+            Binary mask (0/1) indicating whether the model value was observed.
+
+        learn_best : float, optional
+            The fractional amount to adjust the best-fit node based on the
+            residual between the node and the data. Default is `0.2`.
+
+        learn_neighbor : float, optional
+            The fractional amount to adjust the topological neighbors
+            of the best-fit node (i.e. nodes connected by edges) based on the
+            residuals between the nodes and the data. Default is `0.005`.
+
+        max_age : int, optional
+            The maximum age an edge can be before it is removed from the
+            graph. Edges are "aged" each time a node connected to them
+            is selected as the best-matching unit. Default is `15`.
+
+        nbatch : int, optional
+            The number of iterations before a new node is added to the
+            graph and the graph is pruned (i.e. a "batch update").
+            Default is `50`.
+
+        new_err_dec : float, optional
+            Decrease the accumulated error (chi2) of the nodes in the
+            topological vicinity of the new node by a factor of
+            `1. - new_err_dec`. Default is `0.5`.
+
+        all_err_dec : float, optional
+            Decrease the accumulated error (chi2) of **all** nodes in the
+            graph by a factor of `1. - all_err_dec`. Default is `5e-3`.
+
+        max_nodes : int, optional
+            The maximum number of allowed nodes in the graph.
+            Default is `2500`.
+
+        niter : int, optional
+            The maximum number of batches allowed during training.
+            Default is `5000`.
+
+        graph_init : `~networkx.Graph` instance, optional
+            The graph used to initialize the GNG. If not provided, the GNG
+            will be initialized using two random models.
+
+        err_kernel : `~numpy.ndarray` of shape (Nmodel, Nfilt), optional
+            An error kernel added in quadrature to the provided
+            `models_err` used when training the SOM.
+
+        lprob_func : str or func, optional
+            Log-posterior function to be used when computing fits between
+            the network and the models **in the mapped feature space**
+            (i.e. via the provided `feature_maps`). Must return ln(prior),
+            ln(like), ln(post), Ndim, chi2, and (optionally) scale and
+            scale_err. If not provided, `~frankenz.pdf.loglike` will be used.
+
+        rstate : `~numpy.random.RandomState` instance, optional
+            Random state instance. If not passed, the default `~numpy.random`
+            instance will be used.
+
+        lprob_args : args, optional
+            Arguments to be passed to `lprob_func`.
+
+        lprob_kwargs : kwargs, optional
+            Keyword arguments to be passed to `lprob_func`.
+
+        track_scale : bool, optional
+            Whether `lprob_func` also returns the scale-factor. Default is
+            `False`.
+
+        verbose : bool, optional
+            Whether to print progress to `~sys.stderr`. Default is `True`.
 
         """
 
-        pass
+        # Initialize values.
+        if lprob_func is None:
+            def lprob_train(x, xe, xm, ys, yes, yms):
+                results = loglike(x, xe, xm, ys, yes, yms)
+                lnlike, ndim, chi2 = results
+                return np.zeros_like(lnlike), lnlike, lnlike, ndim, chi2
+            lprob_func = lprob_train
+        if lprob_args is None:
+            lprob_args = []
+        if lprob_kwargs is None:
+            lprob_kwargs = dict()
+        if rstate is None:
+            rstate = np.random
 
-    def _train_network(self):
+        # Load in models.
+        if models is None:
+            models = self.models
+        if models_mask is None:
+            models_mask = self.models_mask
+        if models_err is None:
+            models_err = self.models_err
+        if err_kernel is not None:
+            models_err = np.sqrt(models_err**2 + err_kernel**2)
+
+        # Train the GNG.
+        train = self._train_network
+        for i, res in enumerate(train(models, models_err, models_mask,
+                                      learn_best=learn_best,
+                                      learn_neighbor=learn_neighbor,
+                                      max_age=max_age, nbatch=nbatch,
+                                      new_err_dec=new_err_dec,
+                                      all_err_dec=all_err_dec,
+                                      max_nodes=max_nodes,
+                                      niter=niter,
+                                      graph_init=graph_init,
+                                      lprob_func=lprob_func,
+                                      rstate=rstate, lprob_args=lprob_args,
+                                      lprob_kwargs=lprob_kwargs,
+                                      track_scale=track_scale)):
+            fits, bmu, nnodes, nprune = res
+            if i % nbatch == 0 and verbose:
+                sys.stderr.write('\rIteration {0}/{1} '
+                                 '[nodes={2}, edges pruned={3}] '
+                                 .format(int(i/nbatch) + 1, niter, nnodes,
+                                         nprune))
+                sys.stderr.flush()
+        if verbose:
+            sys.stderr.write('\n')
+            sys.stderr.flush()
+
+    def _train_network(self, models, models_err, models_mask,
+                       learn_best=0.2, learn_neighbor=0.005, max_age=15,
+                       nbatch=50, new_err_dec=0.5, all_err_dec=5e-3,
+                       max_nodes=2500, niter=5000, graph_init=None,
+                       lprob_func=None, rstate=None, lprob_args=None,
+                       lprob_kwargs=None, track_scale=False, verbose=True):
         """
-        Internal method used to train the GNG.
+        Train the GNG using the provided set of models.
+
+        Parameters
+        ----------
+        models : `~numpy.ndarray` of shape (Nmodel, Nfilt)
+            Model values.
+
+        models_err : `~numpy.ndarray` of shape (Nmodel, Nfilt)
+            Associated errors on the model values.
+
+        models_mask : `~numpy.ndarray` of shape (Nmodel, Nfilt)
+            Binary mask (0/1) indicating whether the model value was observed.
+
+        learn_best : float, optional
+            The fractional amount to adjust the best-fit node based on the
+            residual between the node and the data. Default is `0.2`.
+
+        learn_neighbor : float, optional
+            The fractional amount to adjust the topological neighbors
+            of the best-fit node (i.e. nodes connected by edges) based on the
+            residuals between the nodes and the data. Default is `0.005`.
+
+        max_age : int, optional
+            The maximum age an edge can be before it is removed from the
+            graph. Edges are "aged" each time a node connected to them
+            is selected as the best-matching unit. Default is `15`.
+
+        nbatch : int, optional
+            The number of iterations before a new node is added to the
+            graph and the graph is pruned (i.e. a "batch update").
+            Default is `50`.
+
+        new_err_dec : float, optional
+            Decrease the accumulated error (chi2) of the nodes in the
+            topological vicinity of the new node by a factor of
+            `1. - new_err_dec`. Default is `0.5`.
+
+        all_err_dec : float, optional
+            Decrease the accumulated error (chi2) of **all** nodes in the
+            graph by a factor of `1. - all_err_dec`. Default is `5e-3`.
+
+        max_nodes : int, optional
+            The maximum number of allowed nodes in the graph.
+            Default is `2500`.
+
+        niter : int, optional
+            The maximum number of batches allowed during training.
+            Default is `5000`.
+
+        graph_init : `~networkx.Graph` instance, optional
+            The graph used to initialize the GNG. If not provided, the GNG
+            will be initialized using two random models.
+
+        lprob_func : str or func, optional
+            Log-posterior function to be used when computing fits between
+            the network and the models **in the mapped feature space**
+            (i.e. via the provided `feature_maps`). Must return ln(prior),
+            ln(like), ln(post), Ndim, chi2, and (optionally) scale and
+            scale_err. If not provided, `~frankenz.pdf.loglike` will be used.
+
+        rstate : `~numpy.random.RandomState` instance, optional
+            Random state instance. If not passed, the default `~numpy.random`
+            instance will be used.
+
+        lprob_args : args, optional
+            Arguments to be passed to `lprob_func`.
+
+        lprob_kwargs : kwargs, optional
+            Keyword arguments to be passed to `lprob_func`.
+
+        track_scale : bool, optional
+            Whether `lprob_func` also returns the scale-factor. Default is
+            `False`.
 
         """
 
-        pass
+        # Initialize values.
+        if lprob_func is None:
+            def lprob_train(x, xe, xm, ys, yes, yms):
+                results = loglike(x, xe, xm, ys, yes, yms)
+                lnlike, ndim, chi2 = results
+                return np.zeros_like(lnlike), lnlike, lnlike, ndim, chi2
+            lprob_func = lprob_train
+        if lprob_args is None:
+            lprob_args = []
+        if lprob_kwargs is None:
+            lprob_kwargs = dict()
+        if rstate is None:
+            rstate = np.random
+
+        # Initialize graph.
+        Nmodel = len(models)
+        if graph_init is None:
+            self.graph = nx.Graph()
+            i1, i2 = rstate.choice(Nmodel, size=2, replace=False)
+            self.graph.add_node(0, pos=models[i1], error=0.)
+            self.graph.add_node(1, pos=models[i2], error=0.)
+            self.graph.add_edge(0, 1, age=0)
+        else:
+            self.graph = graph_init
+        nnode_init = self.graph.number_of_nodes()
+
+        # Initialize models.
+        self.NNODE = self.graph.number_of_nodes()
+        node_idxs = self.graph.nodes()  # grab node indices
+        for count, i in enumerate(node_idxs):
+            self.graph.add_node(i, count=count)  # add counter labels
+        npos = nx.get_node_attributes(self.graph, 'pos')
+        self.nodes = np.array([p[1] for p in iteritems(npos)])
+        y = self.nodes
+        ye = np.zeros_like(y)
+        ym = np.ones_like(y, dtype='bool')
+
+        prune_edges = []
+        nprune = len(prune_edges)
+
+        # Train the network.
+        for i in range(niter * nbatch):
+
+            # Draw object.
+            idx = rstate.choice(Nmodel)
+            x, xe, xm = models[idx], models_err[idx], models_mask[idx]
+
+            # Fit network.
+            node_results = lprob_func(x, xe, xm, y, ye, ym,
+                                      *lprob_args, **lprob_kwargs)
+            node_lnprob, node_chi2 = node_results[2], node_results[4]
+
+            # Rescale models (if needed).
+            if track_scale:
+                node_scales = node_results[5]
+                self.nodes *= node_scales[:, None]  # re-scale node models
+
+            # Find the "best-matching unit" (BMU) and its closest competitor.
+            idx_sort = np.argsort(node_lnprob)
+            y_bmu, bmu = idx_sort[-1], node_idxs[idx_sort[-1]]
+            bmu2 = node_idxs[idx_sort[-2]]
+
+            # Update the BMU.
+            resid = x - self.graph.node[bmu]['pos']
+            y[y_bmu] += learn_best * resid
+            self.graph.node[bmu]['pos'] += learn_best * resid  # update pos
+            self.graph.node[bmu]['error'] += node_chi2[y_bmu]  # add error
+
+            # Update the connection between BMU and BMU2.
+            try:
+                self.graph.edge[bmu][bmu2]['age'] = 0  # rejuvenate edge
+            except:
+                self.graph.add_edge(bmu, bmu2, age=0)  # add edge
+                pass
+
+            # Update the topological neighbors of the BMU.
+            neighbors = self.graph.neighbors(bmu)
+            for neighbor in neighbors:
+                y_nbr = self.graph.node[neighbor]['count']
+                resid = x - self.graph.node[neighbor]['pos']
+                y[y_nbr] += learn_neighbor * resid
+                self.graph.node[neighbor]['pos'] += learn_neighbor * resid
+                self.graph.edge[bmu][neighbor]['age'] += 1  # age edge
+                if self.graph.edge[bmu][neighbor]['age'] == max_age:
+                    prune_edges.append((bmu, neighbor))
+
+            # End of batch.
+            if i % nbatch == 0:
+
+                # Prune the graph and remove any edges that are too old.
+                nprune = len(prune_edges)
+                for e1, e2 in prune_edges:
+                    try:
+                        self.graph.remove_edge(e1, e2)
+                        # Remove any nodes that become disconnected.
+                        if not self.graph.neighbors(e1):
+                            self.graph.remove_node(e1)
+                        if not self.graph.neighbors(e2):
+                            self.graph.remove_node(e2)
+                    except:
+                        pass
+                prune_edges = []
+
+                # Try to add a new node.
+                if self.graph.number_of_nodes() < max_nodes:
+                    # Find the node with the largest cumulative error.
+                    errors = nx.get_node_attributes(self.graph, 'error')
+                    errors = np.array([er for er in iteritems(errors)])
+                    e1_idx = int(errors[np.argmax(errors[:, 1]), 0])
+                    # Find the neighbor with the largest cumulative error.
+                    e1_nbrs = self.graph.neighbors(e1_idx)
+                    e2_idx = e1_nbrs[np.argmax([self.graph.node[t]['error']
+                                                for t in e1_nbrs])]
+                    # Adjust errors.
+                    self.graph.node[e1_idx]['error'] *= (1. - new_err_dec)
+                    self.graph.node[e2_idx]['error'] *= (1. - new_err_dec)
+                    # Insert new node halfway between `e1_idx` and `e2_idx`.
+                    new_pos = 0.5 * (self.graph.node[e1_idx]['pos'] +
+                                     self.graph.node[e2_idx]['pos'])
+                    new_err = self.graph.node[e1_idx]['error']
+                    new_idx = nnode_init + int(i/nbatch)
+                    self.graph.add_node(new_idx, pos=new_pos, error=new_err)
+                    # Modify immediate edges.
+                    self.graph.remove_edge(e1_idx, e2_idx)
+                    self.graph.add_edge(new_idx, e1_idx, age=0)
+                    self.graph.add_edge(new_idx, e2_idx, age=0)
+
+                # Re-initialize models.
+                self.NNODE = self.graph.number_of_nodes()
+                node_idxs = self.graph.nodes()  # grab node indices
+                [self.graph.add_node(i, count=count)
+                 for count, i in enumerate(node_idxs)]  # add counter labels
+                npos = nx.get_node_attributes(self.graph, 'pos')
+                self.nodes = np.array([p[1] for p in iteritems(npos)])
+                y = self.nodes
+                ye = np.zeros_like(y)
+                ym = np.ones_like(y, dtype='bool')
+
+            # Decrease the cumulative errors within each node.
+            for j in self.graph.nodes():
+                self.graph.node[j]['error'] *= (1. - all_err_dec)
+
+            yield node_results, bmu, self.NNODE, nprune
