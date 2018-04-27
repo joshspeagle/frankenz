@@ -727,7 +727,8 @@ class _Network(object):
                                               cdf_thresh=cdf_thresh,
                                               lprob_args=lprob_args,
                                               lprob_kwargs=lprob_kwargs,
-                                              track_scale=track_scale)):
+                                              track_scale=track_scale,
+                                              save_fits=True)):
             if verbose:
                 sys.stderr.write('\rFitting object {0}/{1}'.format(i+1, Ndata))
                 sys.stderr.flush()
@@ -737,7 +738,8 @@ class _Network(object):
 
     def _fit(self, data, data_err, data_mask, lprob_func=None,
              nodes_only=False, wt_thresh=1e-3, cdf_thresh=2e-4,
-             lprob_args=None, lprob_kwargs=None, track_scale=False):
+             lprob_args=None, lprob_kwargs=None, track_scale=False,
+             save_fits=True):
         """
         Internal generator used to compute fits.
 
@@ -780,6 +782,10 @@ class _Network(object):
             Whether `lprob_func` also returns the scale-factor. Default is
             `False`.
 
+        save_fits : bool, optional
+            Whether to save fits internally while computing predictions.
+            Default is `True`.
+
         Returns
         -------
         results : tuple
@@ -800,15 +806,17 @@ class _Network(object):
         Ndata = len(data)
         Nnodes, Nmodels = self.NNODE, self.NMODEL
         self.NDATA = Ndata
-        self.Nneighbors = np.zeros(Ndata, dtype='int')
-        self.neighbors = []
-        self.fit_lnprior = []
-        self.fit_lnlike = []
-        self.fit_lnprob = []
-        self.fit_Ndim = []
-        self.fit_chi2 = []
-        self.fit_scale = []
-        self.fit_scale_err = []
+
+        if save_fits:
+            self.Nneighbors = np.zeros(Ndata, dtype='int')
+            self.neighbors = []
+            self.fit_lnprior = []
+            self.fit_lnlike = []
+            self.fit_lnprob = []
+            self.fit_Ndim = []
+            self.fit_chi2 = []
+            self.fit_scale = []
+            self.fit_scale_err = []
 
         match_sel = np.arange(Nnodes)[self.nodes_Nmatch > 0]
         y = self.nodes[match_sel]
@@ -840,31 +848,34 @@ class _Network(object):
 
             if nodes_only:
                 # Take our nodes to be our models.
-                self.Nneighbors[i] = len(sel_arr)
-                self.neighbors.append(sel_arr)
                 results = [nr[wsel] for nr in node_results]
+                if save_fits:
+                    self.Nneighbors[i] = len(sel_arr)
+                    self.neighbors.append(sel_arr)
             else:
                 # Unique neighbor selection based on network fits.
                 indices = np.array([idx for sidx in sel_arr
                                     for idx in self.nodes_idxs[sidx]])
                 idxs = unique(indices)
                 Nidx = len(idxs)
-                self.Nneighbors[i] = Nidx
-                self.neighbors.append(np.array(idxs))
+                if save_fits:
+                    self.Nneighbors[i] = Nidx
+                    self.neighbors.append(np.array(idxs))
 
                 # Compute posteriors.
                 results = lprob_func(x, xe, xm, self.models[idxs],
                                      self.models_err[idxs],
                                      self.models_mask[idxs],
                                      *lprob_args, **lprob_kwargs)
-            self.fit_lnprior.append(results[0])  # ln(prior)
-            self.fit_lnlike.append(results[1])  # ln(like)
-            self.fit_lnprob.append(results[2])  # ln(prob)
-            self.fit_Ndim.append(results[3])  # dimensionality of fit
-            self.fit_chi2.append(results[4])  # chi2
-            if track_scale:
-                self.fit_scale.append(results[5])  # scale-factor
-                self.fit_scale_err.append(results[6])  # std(s)
+            if save_fits:
+                self.fit_lnprior.append(results[0])  # ln(prior)
+                self.fit_lnlike.append(results[1])  # ln(like)
+                self.fit_lnprob.append(results[2])  # ln(prob)
+                self.fit_Ndim.append(results[3])  # dimensionality of fit
+                self.fit_chi2.append(results[4])  # chi2
+                if track_scale:
+                    self.fit_scale.append(results[5])  # scale-factor
+                    self.fit_scale_err.append(results[6])  # std(s)
 
             yield results
 

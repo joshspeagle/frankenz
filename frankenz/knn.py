@@ -273,7 +273,8 @@ class NearestNeighbors():
                                               rstate=rstate,
                                               lprob_args=lprob_args,
                                               lprob_kwargs=lprob_kwargs,
-                                              track_scale=track_scale)):
+                                              track_scale=track_scale,
+                                              save_fits=True)):
             if verbose:
                 sys.stderr.write('\rFitting object {0}/{1}'.format(i+1, Ndata))
                 sys.stderr.flush()
@@ -282,7 +283,8 @@ class NearestNeighbors():
             sys.stderr.flush()
 
     def _fit(self, data, data_err, data_mask, lprob_func=None, rstate=None,
-             lprob_args=None, lprob_kwargs=None, track_scale=False):
+             lprob_args=None, lprob_kwargs=None, track_scale=False,
+             save_fits=True):
         """
         Internal generator used to compute fits.
 
@@ -316,6 +318,10 @@ class NearestNeighbors():
             Whether `lprob_func` also returns the scale-factor. Default is
             `False`.
 
+        save_fits : bool, optional
+            Whether to save fits internally while computing predictions.
+            Default is `True`.
+
         Returns
         -------
         results : tuple
@@ -340,15 +346,18 @@ class NearestNeighbors():
         Ndata = len(data)
         Nmodels = self.K * self.k
         self.NDATA = Ndata
-        self.Nneighbors = np.zeros(Ndata, dtype='int')
-        self.neighbors = np.zeros((Ndata, Nmodels), dtype='int') - 99
-        self.fit_lnprior = np.zeros((Ndata, Nmodels), dtype='float') - np.inf
-        self.fit_lnlike = np.zeros((Ndata, Nmodels), dtype='float') - np.inf
-        self.fit_lnprob = np.zeros((Ndata, Nmodels), dtype='float') - np.inf
-        self.fit_Ndim = np.zeros((Ndata, Nmodels), dtype='int')
-        self.fit_chi2 = np.zeros((Ndata, Nmodels), dtype='float') + np.inf
-        self.fit_scale = np.ones((Ndata, Nmodels), dtype='float')
-        self.fit_scale_err = np.zeros((Ndata, Nmodels), dtype='float')
+
+        if save_fits:
+            inf = np.inf
+            self.Nneighbors = np.zeros(Ndata, dtype='int')
+            self.neighbors = np.zeros((Ndata, Nmodels), dtype='int') - 99
+            self.fit_lnprior = np.zeros((Ndata, Nmodels), dtype='float') - inf
+            self.fit_lnlike = np.zeros((Ndata, Nmodels), dtype='float') - inf
+            self.fit_lnprob = np.zeros((Ndata, Nmodels), dtype='float') - inf
+            self.fit_Ndim = np.zeros((Ndata, Nmodels), dtype='int')
+            self.fit_chi2 = np.zeros((Ndata, Nmodels), dtype='float') + inf
+            self.fit_scale = np.ones((Ndata, Nmodels), dtype='float')
+            self.fit_scale_err = np.zeros((Ndata, Nmodels), dtype='float')
 
         # Fit data.
         for i, (x, xe, xm) in enumerate(zip(data, data_err, data_mask)):
@@ -366,21 +375,23 @@ class NearestNeighbors():
             # Unique neighbor selection.
             idxs = unique(indices)
             Nidx = len(idxs)
-            self.Nneighbors[i] = Nidx
-            self.neighbors[i, :Nidx] = np.array(idxs)
+            if save_fits:
+                self.Nneighbors[i] = Nidx
+                self.neighbors[i, :Nidx] = np.array(idxs)
 
             # Compute posteriors.
             results = lprob_func(x, xe, xm, self.models[idxs],
                                  self.models_err[idxs], self.models_mask[idxs],
                                  *lprob_args, **lprob_kwargs)
-            self.fit_lnprior[i, :Nidx] = results[0]  # ln(prior)
-            self.fit_lnlike[i, :Nidx] = results[1]  # ln(like)
-            self.fit_lnprob[i, :Nidx] = results[2]  # ln(prob)
-            self.fit_Ndim[i, :Nidx] = results[3]  # dimensionality of fit
-            self.fit_chi2[i, :Nidx] = results[4]  # chi2
-            if track_scale:
-                self.fit_scale[i, :Nidx] = results[5]  # scale-factor
-                self.fit_scale_err[i, :Nidx] = results[6]  # std(s)
+            if save_fits:
+                self.fit_lnprior[i, :Nidx] = results[0]  # ln(prior)
+                self.fit_lnlike[i, :Nidx] = results[1]  # ln(like)
+                self.fit_lnprob[i, :Nidx] = results[2]  # ln(prob)
+                self.fit_Ndim[i, :Nidx] = results[3]  # dimensionality of fit
+                self.fit_chi2[i, :Nidx] = results[4]  # chi2
+                if track_scale:
+                    self.fit_scale[i, :Nidx] = results[5]  # scale-factor
+                    self.fit_scale_err[i, :Nidx] = results[6]  # std(s)
 
             yield results
 

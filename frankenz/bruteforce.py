@@ -121,7 +121,8 @@ class BruteForce():
                                               lprob_func=lprob_func,
                                               lprob_args=lprob_args,
                                               lprob_kwargs=lprob_kwargs,
-                                              track_scale=track_scale)):
+                                              track_scale=track_scale,
+                                              save_fits=True)):
             if verbose:
                 sys.stderr.write('\rFitting object {0}/{1}'.format(i+1, Ndata))
                 sys.stderr.flush()
@@ -130,7 +131,8 @@ class BruteForce():
             sys.stderr.flush()
 
     def _fit(self, data, data_err, data_mask, lprob_func=None,
-             lprob_args=None, lprob_kwargs=None, track_scale=False):
+             lprob_args=None, lprob_kwargs=None, track_scale=False,
+             save_fits=True):
         """
         Internal generator used to compute fits.
 
@@ -160,6 +162,10 @@ class BruteForce():
             Whether `lprob_func` also returns the scale-factor. Default is
             `False`.
 
+        save_fits : bool, optional
+            Whether to save fits internally while computing predictions.
+            Default is `True`.
+
         Returns
         -------
         results : tuple
@@ -182,26 +188,29 @@ class BruteForce():
         Ndata = len(data)
         Nmodels = self.NMODEL
         self.NDATA = Ndata
-        self.fit_lnprior = np.zeros((Ndata, Nmodels), dtype='float')
-        self.fit_lnlike = np.zeros((Ndata, Nmodels), dtype='float')
-        self.fit_lnprob = np.zeros((Ndata, Nmodels), dtype='float')
-        self.fit_Ndim = np.zeros((Ndata, Nmodels), dtype='int')
-        self.fit_chi2 = np.zeros((Ndata, Nmodels), dtype='float')
-        self.fit_scale = np.ones((Ndata, Nmodels), dtype='float')
-        self.fit_scale_err = np.zeros((Ndata, Nmodels), dtype='float')
+
+        if save_fits:
+            self.fit_lnprior = np.zeros((Ndata, Nmodels), dtype='float')
+            self.fit_lnlike = np.zeros((Ndata, Nmodels), dtype='float')
+            self.fit_lnprob = np.zeros((Ndata, Nmodels), dtype='float')
+            self.fit_Ndim = np.zeros((Ndata, Nmodels), dtype='int')
+            self.fit_chi2 = np.zeros((Ndata, Nmodels), dtype='float')
+            self.fit_scale = np.ones((Ndata, Nmodels), dtype='float')
+            self.fit_scale_err = np.zeros((Ndata, Nmodels), dtype='float')
 
         # Fit data.
         for i, (x, xe, xm) in enumerate(zip(data, data_err, data_mask)):
             results = lprob_func(x, xe, xm, self.models, self.models_err,
                                  self.models_mask, *lprob_args, **lprob_kwargs)
-            self.fit_lnprior[i] = results[0]  # ln(prior)
-            self.fit_lnlike[i] = results[1]  # ln(like)
-            self.fit_lnprob[i] = results[2]  # ln(prob)
-            self.fit_Ndim[i] = results[3]  # dimensionality of fit
-            self.fit_chi2[i] = results[4]  # chi2
-            if track_scale:
-                self.fit_scale[i] = results[5]  # scale-factor
-                self.fit_scale_err[i] = results[6]  # std(s)
+            if save_fits:
+                self.fit_lnprior[i] = results[0]  # ln(prior)
+                self.fit_lnlike[i] = results[1]  # ln(like)
+                self.fit_lnprob[i] = results[2]  # ln(prob)
+                self.fit_Ndim[i] = results[3]  # dimensionality of fit
+                self.fit_chi2[i] = results[4]  # chi2
+                if track_scale:
+                    self.fit_scale[i] = results[5]  # scale-factor
+                    self.fit_scale_err[i] = results[6]  # std(s)
 
             yield results
 
