@@ -1,12 +1,24 @@
 frankenz
 =========
 
-A photometric redshift monstrosity.
+A photometric redshift monstrosity. **Alpha release.**
 
-**This project is in active development. Use code/results at your own risk!**
+**WARNING: This project is under active development and not yet stable.**
+
+`frankenz` is a Pure Python implementation of a variety of methods to quickly
+yet robustly perform (hierarchical) Bayesian inference using large
+(but discrete) sets of (possibly noisy) models with (noisy) photometric data.
+The code also contains a number of additional utilities, including:
+- a module for generating quick mocks (along with filter curves and SEDs), 
+- several manifold-learning algorithms,
+- a flexible set of photometric likelihoods,
+- fast kernel density estimation, and
+- PDF-oriented plotting utilities.
+
+Paper forthcoming.
 
 ### Documentation
-**Currently nonexistent.**
+**Currently nonexistent.** See the demos for examples.
 
 ### Installation
 `frankenz` can be installed by running
