@@ -209,7 +209,7 @@ class NearestNeighbors():
         lprob_func : str or func, optional
             Log-posterior function to be used. Must return ln(prior), ln(like),
             ln(post), Ndim, chi2, and (optionally) scale and std(scale).
-            If not provided, `~frankenz.pdf.loglike` will be used.
+            If not provided, `~frankenz.pdf.logprob` will be used.
 
         rstate : `~numpy.random.RandomState` instance, optional
             Random state instance. If not passed, the default `~numpy.random`
@@ -250,11 +250,7 @@ class NearestNeighbors():
 
         # Initialize values.
         if lprob_func is None:
-            def lprob_train(x, xe, xm, ys, yes, yms):
-                results = loglike(x, xe, xm, ys, yes, yms)
-                lnlike, ndim, chi2 = results
-                return np.zeros_like(lnlike), lnlike, lnlike, ndim, chi2
-            lprob_func = lprob_train
+            lprob_func = logprob
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
@@ -268,13 +264,13 @@ class NearestNeighbors():
         self.dbound = distance_upper_bound
 
         # Fit data.
-        for i, results in enumerate(self._fit(data, data_err, data_mask,
-                                              lprob_func=lprob_func,
-                                              rstate=rstate,
-                                              lprob_args=lprob_args,
-                                              lprob_kwargs=lprob_kwargs,
-                                              track_scale=track_scale,
-                                              save_fits=True)):
+        for i, blob in enumerate(self._fit(data, data_err, data_mask,
+                                           lprob_func=lprob_func,
+                                           rstate=rstate,
+                                           lprob_args=lprob_args,
+                                           lprob_kwargs=lprob_kwargs,
+                                           track_scale=track_scale,
+                                           save_fits=True)):
             if verbose:
                 sys.stderr.write('\rFitting object {0}/{1}'.format(i+1, Ndata))
                 sys.stderr.flush()
@@ -302,7 +298,7 @@ class NearestNeighbors():
         lprob_func : str or func, optional
             Log-posterior function to be used. Must return ln(prior), ln(like),
             ln(post), Ndim, chi2, and (optionally) scale and std(scale).
-            If not provided, `~frankenz.pdf.loglike` will be used.
+            If not provided, `~frankenz.pdf.logprob` will be used.
 
         rstate : `~numpy.random.RandomState` instance, optional
             Random state instance. If not passed, the default `~numpy.random`
@@ -331,11 +327,7 @@ class NearestNeighbors():
 
         # Initialize values.
         if lprob_func is None:
-            def lprob_train(x, xe, xm, ys, yes, yms):
-                results = loglike(x, xe, xm, ys, yes, yms)
-                lnlike, ndim, chi2 = results
-                return np.zeros_like(lnlike), lnlike, lnlike, ndim, chi2
-            lprob_func = lprob_train
+            lprob_func = logprob
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
@@ -393,7 +385,7 @@ class NearestNeighbors():
                     self.fit_scale[i, :Nidx] = results[5]  # scale-factor
                     self.fit_scale_err[i, :Nidx] = results[6]  # std(s)
 
-            yield results
+            yield idxs, Nidx, results
 
     def predict(self, model_labels, model_label_errs, label_dict=None,
                 label_grid=None, logwt=None, kde_args=None, kde_kwargs=None,
@@ -595,7 +587,7 @@ class NearestNeighbors():
         lprob_func : str or func, optional
             Log-posterior function to be used. Must return ln(prior), ln(like),
             ln(post), Ndim, chi2, and (optionally) scale and std(scale).
-            If not provided, `~frankenz.pdf.loglike` will be used.
+            If not provided, `~frankenz.pdf.logprob` will be used.
 
         rstate : `~numpy.random.RandomState` instance, optional
             Random state instance. If not passed, the default `~numpy.random`
@@ -668,11 +660,7 @@ class NearestNeighbors():
 
         # Initialize values.
         if lprob_func is None:
-            def lprob_train(x, xe, xm, ys, yes, yms):
-                results = loglike(x, xe, xm, ys, yes, yms)
-                lnlike, ndim, chi2 = results
-                return np.zeros_like(lnlike), lnlike, lnlike, ndim, chi2
-            lprob_func = lprob_train
+            lprob_func = logprob
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
@@ -758,7 +746,7 @@ class NearestNeighbors():
         lprob_func : str or func, optional
             Log-posterior function to be used. Must return ln(prior), ln(like),
             ln(post), Ndim, chi2, and (optionally) scale and std(scale).
-            If not provided, `~frankenz.pdf.loglike` will be used.
+            If not provided, `~frankenz.pdf.logprob` will be used.
 
         rstate : `~numpy.random.RandomState` instance, optional
             Random state instance. If not passed, the default `~numpy.random`
@@ -805,11 +793,7 @@ class NearestNeighbors():
 
         # Initialize values.
         if lprob_func is None:
-            def lprob_train(x, xe, xm, ys, yes, yms):
-                results = loglike(x, xe, xm, ys, yes, yms)
-                lnlike, ndim, chi2 = results
-                return np.zeros_like(lnlike), lnlike, lnlike, ndim, chi2
-            lprob_func = lprob_train
+            lprob_func = logprob
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:

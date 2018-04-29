@@ -86,7 +86,7 @@ class BruteForce():
         lprob_func : str or func, optional
             Log-posterior function to be used. Must return ln(prior), ln(like),
             ln(post), Ndim, chi2, and (optionally) scale and std(scale).
-            If not provided, `~frankenz.pdf.loglike` will be used.
+            If not provided, `~frankenz.pdf.logprob` will be used.
 
         lprob_args : args, optional
             Arguments to be passed to `lprob_func`.
@@ -105,11 +105,7 @@ class BruteForce():
 
         # Initialize values.
         if lprob_func is None:
-            def lprob_train(x, xe, xm, ys, yes, yms):
-                results = loglike(x, xe, xm, ys, yes, yms)
-                lnlike, ndim, chi2 = results
-                return np.zeros_like(lnlike), lnlike, lnlike, ndim, chi2
-            lprob_func = lprob_train
+            lprob_func = logprob
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
@@ -150,7 +146,7 @@ class BruteForce():
         lprob_func : str or func, optional
             Log-posterior function to be used. Must return ln(prior), ln(like),
             ln(post), Ndim, chi2, and (optionally) scale and std(scale).
-            If not provided, `~frankenz.pdf.loglike` will be used.
+            If not provided, `~frankenz.pdf.logprob` will be used.
 
         lprob_args : args, optional
             Arguments to be passed to `lprob_func`.
@@ -175,11 +171,7 @@ class BruteForce():
 
         # Initialize values.
         if lprob_func is None:
-            def lprob_train(x, xe, xm, ys, yes, yms):
-                results = loglike(x, xe, xm, ys, yes, yms)
-                lnlike, ndim, chi2 = results
-                return np.zeros_like(lnlike), lnlike, lnlike, ndim, chi2
-            lprob_func = lprob_train
+            lprob_func = logprob
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
@@ -409,7 +401,7 @@ class BruteForce():
         lprob_func : str or func, optional
             Log-posterior function to be used. Must return ln(prior), ln(like),
             ln(post), Ndim, chi2, and (optionally) scale and std(scale).
-            If not provided, `~frankenz.pdf.loglike` will be used.
+            If not provided, `~frankenz.pdf.logprob` will be used.
 
         label_dict : `~frankenz.pdf.PDFDict` object, optional
             Dictionary of pre-computed stationary kernels. If provided,
@@ -460,11 +452,7 @@ class BruteForce():
 
         # Initialize values.
         if lprob_func is None:
-            def lprob_train(x, xe, xm, ys, yes, yms):
-                results = loglike(x, xe, xm, ys, yes, yms)
-                lnlike, ndim, chi2 = results
-                return np.zeros_like(lnlike), lnlike, lnlike, ndim, chi2
-            lprob_func = lprob_train
+            lprob_func = logprob
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
@@ -543,7 +531,7 @@ class BruteForce():
         lprob_func : str or func, optional
             Log-posterior function to be used. Must return ln(prior), ln(like),
             ln(post), Ndim, chi2, and (optionally) scale and std(scale).
-            If not provided, `~frankenz.pdf.loglike` will be used.
+            If not provided, `~frankenz.pdf.logprob` will be used.
 
         label_dict : `~frankenz.pdf.PDFDict` object, optional
             Dictionary of pre-computed stationary kernels. If provided,
@@ -586,11 +574,7 @@ class BruteForce():
 
         # Initialize values.
         if lprob_func is None:
-            def lprob_train(x, xe, xm, ys, yes, yms):
-                results = loglike(x, xe, xm, ys, yes, yms)
-                lnlike, ndim, chi2 = results
-                return np.zeros_like(lnlike), lnlike, lnlike, ndim, chi2
-            lprob_func = lprob_train
+            lprob_func = logprob
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:

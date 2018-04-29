@@ -170,18 +170,19 @@ class _Network(object):
         self.neighbors = None
         self.Nneighbors = None
 
-    def populate_network(self, lprob_func=None, discrete=False,
-                         wt_thresh=1e-3, cdf_thresh=2e-4, lprob_args=None,
-                         lprob_kwargs=None, track_scale=False, verbose=True):
+    def populate_network(self, lpnet_func=None, discrete=False,
+                         wt_thresh=1e-3, cdf_thresh=2e-4, lpnet_args=None,
+                         lpnet_kwargs=None, track_scale=False, verbose=True):
         """
         Map input models onto the nodes of the network.
 
         Parameters
         ----------
-        lprob_func : str or func, optional
-            Log-posterior function to be used. Must return ln(prior), ln(like),
+        lpnet_func : str or func, optional
+            Log-posterior function to be used when mapping objects onto
+            the network. Must return ln(prior), ln(like),
             ln(post), Ndim, chi2, and (optionally) scale and std(scale).
-            If not provided, `~frankenz.pdf.loglike` will be used.
+            If not provided, `~frankenz.pdf.logprob` will be used.
 
         discrete : bool, optional
             Whether to map objects back to the best-fitting node **only**,
@@ -197,14 +198,15 @@ class _Network(object):
             nodes with (relatively) negligible weights. This option is only
             used when `wt_thresh=None`. Default is `2e-4`.
 
-        lprob_args : args, optional
-            Arguments to be passed to `lprob_func`.
+        lpnet_args : args, optional
+            Arguments to be passed to `lpnet_func`.
 
-        lprob_kwargs : kwargs, optional
-            Keyword arguments to be passed to `lprob_func`.
+        lpnet_kwargs : kwargs, optional
+            Keyword arguments to be passed to `lpnet_func`.
+            By default, this sets `free_scale=True`.
 
         track_scale : bool, optional
-            Whether `lprob_func` also returns the scale-factor. Default is
+            Whether `lpnet_func` also returns the scale-factor. Default is
             `False`.
 
         verbose : bool, optional
@@ -213,16 +215,12 @@ class _Network(object):
         """
 
         # Initialize values.
-        if lprob_func is None:
-            def lprob_train(x, xe, xm, ys, yes, yms):
-                results = loglike(x, xe, xm, ys, yes, yms)
-                lnlike, ndim, chi2 = results
-                return np.zeros_like(lnlike), lnlike, lnlike, ndim, chi2
-            lprob_func = lprob_train
-        if lprob_args is None:
-            lprob_args = []
-        if lprob_kwargs is None:
-            lprob_kwargs = dict()
+        if lpnet_func is None:
+            lpnet_func = logprob
+        if lpnet_args is None:
+            lpnet_args = []
+        if lpnet_kwargs is None:
+            lpnet_kwargs = {'free_scale': True}
         if wt_thresh is None and cdf_thresh is None:
             wt_thresh = -np.inf  # default to no clipping/thresholding
 
@@ -230,12 +228,12 @@ class _Network(object):
         Nmodels = self.NMODEL
         percentage = -99
         populate = self._populate_network
-        for i, results in enumerate(populate(lprob_func=lprob_func,
+        for i, results in enumerate(populate(lpnet_func=lpnet_func,
                                              discrete=discrete,
                                              wt_thresh=wt_thresh,
                                              cdf_thresh=cdf_thresh,
-                                             lprob_args=lprob_args,
-                                             lprob_kwargs=lprob_kwargs,
+                                             lpnet_args=lpnet_args,
+                                             lpnet_kwargs=lpnet_kwargs,
                                              track_scale=track_scale)):
             new_percentage = int((i+1) / Nmodels * 100)
             if verbose and new_percentage != percentage:
@@ -247,18 +245,19 @@ class _Network(object):
             sys.stderr.write('\n')
             sys.stderr.flush()
 
-    def _populate_network(self, lprob_func=None, discrete=False,
-                          wt_thresh=1e-3, cdf_thresh=2e-4, lprob_args=None,
-                          lprob_kwargs=None, track_scale=False):
+    def _populate_network(self, lpnet_func=None, discrete=False,
+                          wt_thresh=1e-3, cdf_thresh=2e-4, lpnet_args=None,
+                          lpnet_kwargs=None, track_scale=False):
         """
         Internal generator used by the network to map models onto nodes.
 
         Parameters
         ----------
-        lprob_func : str or func, optional
-            Log-posterior function to be used. Must return ln(prior), ln(like),
+        lpnet_func : str or func, optional
+            Log-posterior function to be used when mapping objects onto
+            the network. Must return ln(prior), ln(like),
             ln(post), Ndim, chi2, and (optionally) scale and std(scale).
-            If not provided, `~frankenz.pdf.loglike` will be used.
+            If not provided, `~frankenz.pdf.logprob` will be used.
 
         discrete : bool, optional
             Whether to map objects back to the best-fitting node **only**,
@@ -274,32 +273,31 @@ class _Network(object):
             nodes with (relatively) negligible weights. This option is only
             used when `wt_thresh=None`. Default is `2e-4`.
 
-        lprob_args : args, optional
-            Arguments to be passed to `lprob_func`.
+        lpnet_args : args, optional
+            Arguments to be passed to `lpnet_func`.
 
-        lprob_kwargs : kwargs, optional
-            Keyword arguments to be passed to `lprob_func`.
+        lpnet_kwargs : kwargs, optional
+            Keyword arguments to be passed to `lpnet_func`.
+            By default, this sets `free_scale=True`.
 
         track_scale : bool, optional
-            Whether `lprob_func` also returns the scale-factor. Default is
+            Whether `lpnet_func` also returns the scale-factor. Default is
             `False`.
 
         """
 
         # Initialize values.
-        if lprob_func is None:
-            def lprob_train(x, xe, xm, ys, yes, yms):
-                results = loglike(x, xe, xm, ys, yes, yms)
-                lnlike, ndim, chi2 = results
-                return np.zeros_like(lnlike), lnlike, lnlike, ndim, chi2
-            lprob_func = lprob_train
-        if lprob_args is None:
-            lprob_args = []
-        if lprob_kwargs is None:
-            lprob_kwargs = dict()
+        if lpnet_func is None:
+            lpnet_func = logprob
+        if lpnet_args is None:
+            lpnet_args = []
+        if lpnet_kwargs is None:
+            lpnet_kwargs = {'free_scale': True}
         if wt_thresh is None and cdf_thresh is None:
             wt_thresh = -np.inf  # default to no clipping/thresholding
-        self.lprob_func = lprob_func
+        self.lpnet_func = lpnet_func
+        self.lpnet_args = lpnet_args
+        self.lpnet_kwargs = lpnet_kwargs
 
         Nnodes, Nmodels = self.NNODE, self.NMODEL
         self.nodes_idxs = [[] for i in range(Nnodes)]
@@ -317,8 +315,8 @@ class _Network(object):
                                             self.models_mask)):
 
             # Fit network.
-            node_results = lprob_func(x, xe, xm, y, ye, ym,
-                                      *lprob_args, **lprob_kwargs)
+            node_results = lpnet_func(x, xe, xm, y, ye, ym,
+                                      *lpnet_args, **lpnet_kwargs)
             node_lnprob = node_results[2]
 
             # Find the set of node(s) the model maps to.
@@ -662,7 +660,7 @@ class _Network(object):
             lprob_kwargs=None, track_scale=False, verbose=True):
         """
         Fit input models to the input data to compute the associated
-        log-posteriors using the KMCkNN approximation.
+        log-posteriors using the network.
 
         Parameters
         ----------
@@ -678,7 +676,7 @@ class _Network(object):
         lprob_func : str or func, optional
             Log-posterior function to be used. Must return ln(prior), ln(like),
             ln(post), Ndim, chi2, and (optionally) scale and std(scale).
-            If not provided, `~frankenz.pdf.loglike` will be used.
+            If not provided, `~frankenz.pdf.logprob` will be used.
 
         nodes_only : bool, optional
             Whether to only fit the nodes of the network, ignoring the
@@ -710,7 +708,7 @@ class _Network(object):
 
         # Initialize values.
         if lprob_func is None:
-            lprob_func = self.lprob_func
+            lprob_func = logprob
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
@@ -720,15 +718,15 @@ class _Network(object):
         Ndata = len(data)
 
         # Fit data.
-        for i, results in enumerate(self._fit(data, data_err, data_mask,
-                                              lprob_func=lprob_func,
-                                              nodes_only=nodes_only,
-                                              wt_thresh=wt_thresh,
-                                              cdf_thresh=cdf_thresh,
-                                              lprob_args=lprob_args,
-                                              lprob_kwargs=lprob_kwargs,
-                                              track_scale=track_scale,
-                                              save_fits=True)):
+        for i, blob in enumerate(self._fit(data, data_err, data_mask,
+                                           lprob_func=lprob_func,
+                                           nodes_only=nodes_only,
+                                           wt_thresh=wt_thresh,
+                                           cdf_thresh=cdf_thresh,
+                                           lprob_args=lprob_args,
+                                           lprob_kwargs=lprob_kwargs,
+                                           track_scale=track_scale,
+                                           save_fits=True)):
             if verbose:
                 sys.stderr.write('\rFitting object {0}/{1}'.format(i+1, Ndata))
                 sys.stderr.flush()
@@ -757,7 +755,7 @@ class _Network(object):
         lprob_func : str or func, optional
             Log-posterior function to be used. Must return ln(prior), ln(like),
             ln(post), Ndim, chi2, and (optionally) scale and std(scale).
-            If not provided, `~frankenz.pdf.loglike` will be used.
+            If not provided, `~frankenz.pdf.logprob` will be used.
 
         nodes_only : bool, optional
             Whether to only fit the nodes of the network, ignoring the
@@ -795,7 +793,7 @@ class _Network(object):
 
         # Initialize values.
         if lprob_func is None:
-            lprob_func = self.lprob_func
+            lprob_func = logprob
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
@@ -806,6 +804,9 @@ class _Network(object):
         Ndata = len(data)
         Nnodes, Nmodels = self.NNODE, self.NMODEL
         self.NDATA = Ndata
+        lpnet_func = self.lpnet_func
+        lpnet_args = self.lpnet_args
+        lpnet_kwargs = self.lpnet_kwargs
 
         if save_fits:
             self.Nneighbors = np.zeros(Ndata, dtype='int')
@@ -829,8 +830,8 @@ class _Network(object):
         for i, (x, xe, xm) in enumerate(zip(data, data_err, data_mask)):
 
             # Fit network.
-            node_results = lprob_func(x, xe, xm, y, ye, ym,
-                                      *lprob_args, **lprob_kwargs)
+            node_results = lpnet_func(x, xe, xm, y, ye, ym,
+                                      *lpnet_args, **lpnet_kwargs)
             node_lnprob = node_results[2]
 
             # Apply thresholding.
@@ -877,7 +878,7 @@ class _Network(object):
                     self.fit_scale.append(results[5])  # scale-factor
                     self.fit_scale_err.append(results[6])  # std(s)
 
-            yield results
+            yield idxs, Nidx, results
 
     def predict(self, model_labels, model_label_errs, label_dict=None,
                 label_grid=None, logwt=None, kde_args=None, kde_kwargs=None,
@@ -1073,7 +1074,7 @@ class _Network(object):
                     save_fits=True):
         """
         Fit input models to the input data to compute the associated
-        log-posteriors and 1-D predictions using the KMCkNN approximation.
+        log-posteriors and 1-D predictions using the network.
 
         Parameters
         ----------
@@ -1095,7 +1096,7 @@ class _Network(object):
         lprob_func : str or func, optional
             Log-posterior function to be used. Must return ln(prior), ln(like),
             ln(post), Ndim, chi2, and (optionally) scale and std(scale).
-            If not provided, `~frankenz.pdf.loglike` will be used.
+            If not provided, `~frankenz.pdf.logprob` will be used.
 
         nodes_only : bool, optional
             Whether to only fit the nodes of the network, ignoring the
@@ -1151,7 +1152,7 @@ class _Network(object):
 
         # Initialize values.
         if lprob_func is None:
-            lprob_func = self.lprob_func
+            lprob_func = logprob
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
@@ -1246,7 +1247,7 @@ class _Network(object):
         lprob_func : str or func, optional
             Log-posterior function to be used. Must return ln(prior), ln(like),
             ln(post), Ndim, chi2, and (optionally) scale and std(scale).
-            If not provided, `~frankenz.pdf.loglike` will be used.
+            If not provided, `~frankenz.pdf.logprob` will be used.
 
         node_pdfs : `~numpy.ndarray` of shape (Nnodes, Ngrid), optional
             The effective PDFs at each node. If `nodes_only=True` when
@@ -1295,7 +1296,7 @@ class _Network(object):
 
         # Initialize values.
         if lprob_func is None:
-            lprob_func = self.lprob_func
+            lprob_func = logprob
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
@@ -1317,6 +1318,9 @@ class _Network(object):
         y = self.nodes[match_sel]
         ye = np.zeros_like(y)
         ym = np.ones_like(y, dtype='bool')
+        lpnet_func = self.lpnet_func
+        lpnet_args = self.lpnet_args
+        lpnet_kwargs = self.lpnet_kwargs
 
         if save_fits:
             self.NDATA = Ndata
@@ -1334,8 +1338,8 @@ class _Network(object):
         for i, (x, xe, xm) in enumerate(zip(data, data_err, data_mask)):
 
             # Fit network.
-            node_results = lprob_func(x, xe, xm, y, ye, ym,
-                                      *lprob_args, **lprob_kwargs)
+            node_results = lpnet_func(x, xe, xm, y, ye, ym,
+                                      *lpnet_args, **lpnet_kwargs)
             node_lnprob = node_results[2]
 
             # Apply thresholding.
@@ -1480,7 +1484,7 @@ class SelfOrganizingMap(_Network):
             the network and the models **in the mapped feature space**
             (i.e. via the provided `feature_maps`). Must return ln(prior),
             ln(like), ln(post), Ndim, chi2, and (optionally) scale and
-            scale_err. If not provided, `~frankenz.pdf.loglike` will be used.
+            scale_err. If not provided, `~frankenz.pdf.logprob` will be used.
 
         learn_func : func, optional
             A function that returns the learning rate as a function of
@@ -1510,6 +1514,7 @@ class SelfOrganizingMap(_Network):
 
         lprob_kwargs : kwargs, optional
             Keyword arguments to be passed to `lprob_func`.
+            By default, this sets `free_scale=True`.
 
         track_scale : bool, optional
             Whether `lprob_func` also returns the scale-factor. Default is
@@ -1534,15 +1539,11 @@ class SelfOrganizingMap(_Network):
 
         # Initialize values.
         if lprob_func is None:
-            def lprob_train(x, xe, xm, ys, yes, yms):
-                results = loglike(x, xe, xm, ys, yes, yms)
-                lnlike, ndim, chi2 = results
-                return np.zeros_like(lnlike), lnlike, lnlike, ndim, chi2
-            lprob_func = lprob_train
+            lprob_func = logprob
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
-            lprob_kwargs = dict()
+            lprob_kwargs = {'free_scale': True}
         if learn_func is None:
             learn_func = learn_harmonic
         if learn_args is None:
@@ -1624,7 +1625,7 @@ class SelfOrganizingMap(_Network):
             the network and the models **in the mapped feature space**
             (i.e. via the provided `feature_maps`). Must return ln(prior),
             ln(like), ln(post), Ndim, chi2, and (optionally) scale and
-            scale_err. If not provided, `~frankenz.pdf.loglike` will be used.
+            scale_err. If not provided, `~frankenz.pdf.logprob` will be used.
 
         nside : int, optional
             The number of nodes used to specify each side of the SOM.
@@ -1672,6 +1673,7 @@ class SelfOrganizingMap(_Network):
 
         lprob_kwargs : kwargs, optional
             Keyword arguments to be passed to `lprob_func`.
+            By default, this sets `free_scale=True`.
 
         track_scale : bool, optional
             Whether `lprob_func` also returns the scale-factor. Default is
@@ -1695,15 +1697,11 @@ class SelfOrganizingMap(_Network):
         self.NITER, self.NBATCH = niter, nbatch
         times = np.linspace(0., 1., niter * nbatch)
         if lprob_func is None:
-            def lprob_train(x, xe, xm, ys, yes, yms):
-                results = loglike(x, xe, xm, ys, yes, yms)
-                lnlike, ndim, chi2 = results
-                return np.zeros_like(lnlike), lnlike, lnlike, ndim, chi2
-            lprob_func = lprob_train
+            lprob_func = logprob
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
-            lprob_kwargs = dict()
+            lprob_kwargs = {'free_scale': True}
         if learn_func is None:
             learn_func = learn_harmonic
         if learn_args is None:
@@ -1880,14 +1878,14 @@ class GrowingNeuralGas(_Network):
 
         err_kernel : `~numpy.ndarray` of shape (Nmodel, Nfilt), optional
             An error kernel added in quadrature to the provided
-            `models_err` used when training the SOM.
+            `models_err` used when training the GNG.
 
         lprob_func : str or func, optional
             Log-posterior function to be used when computing fits between
             the network and the models **in the mapped feature space**
             (i.e. via the provided `feature_maps`). Must return ln(prior),
             ln(like), ln(post), Ndim, chi2, and (optionally) scale and
-            scale_err. If not provided, `~frankenz.pdf.loglike` will be used.
+            scale_err. If not provided, `~frankenz.pdf.logprob` will be used.
 
         rstate : `~numpy.random.RandomState` instance, optional
             Random state instance. If not passed, the default `~numpy.random`
@@ -1895,6 +1893,7 @@ class GrowingNeuralGas(_Network):
 
         lprob_args : args, optional
             Arguments to be passed to `lprob_func`.
+            By default, this sets `free_scale=True`.
 
         lprob_kwargs : kwargs, optional
             Keyword arguments to be passed to `lprob_func`.
@@ -1910,15 +1909,11 @@ class GrowingNeuralGas(_Network):
 
         # Initialize values.
         if lprob_func is None:
-            def lprob_train(x, xe, xm, ys, yes, yms):
-                results = loglike(x, xe, xm, ys, yes, yms)
-                lnlike, ndim, chi2 = results
-                return np.zeros_like(lnlike), lnlike, lnlike, ndim, chi2
-            lprob_func = lprob_train
+            lprob_func = logprob
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
-            lprob_kwargs = dict()
+            lprob_kwargs = {'free_scale': True}
         if rstate is None:
             rstate = np.random
 
@@ -2023,7 +2018,7 @@ class GrowingNeuralGas(_Network):
             the network and the models **in the mapped feature space**
             (i.e. via the provided `feature_maps`). Must return ln(prior),
             ln(like), ln(post), Ndim, chi2, and (optionally) scale and
-            scale_err. If not provided, `~frankenz.pdf.loglike` will be used.
+            scale_err. If not provided, `~frankenz.pdf.logprob` will be used.
 
         rstate : `~numpy.random.RandomState` instance, optional
             Random state instance. If not passed, the default `~numpy.random`
@@ -2034,6 +2029,7 @@ class GrowingNeuralGas(_Network):
 
         lprob_kwargs : kwargs, optional
             Keyword arguments to be passed to `lprob_func`.
+            By default, this sets `free_scale=True`.
 
         track_scale : bool, optional
             Whether `lprob_func` also returns the scale-factor. Default is
@@ -2043,15 +2039,11 @@ class GrowingNeuralGas(_Network):
 
         # Initialize values.
         if lprob_func is None:
-            def lprob_train(x, xe, xm, ys, yes, yms):
-                results = loglike(x, xe, xm, ys, yes, yms)
-                lnlike, ndim, chi2 = results
-                return np.zeros_like(lnlike), lnlike, lnlike, ndim, chi2
-            lprob_func = lprob_train
+            lprob_func = logprob
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
-            lprob_kwargs = dict()
+            lprob_kwargs = {'free_scale': True}
         if rstate is None:
             rstate = np.random
 
