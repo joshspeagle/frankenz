@@ -19,12 +19,18 @@ import warnings
 from matplotlib import pyplot as plt
 from scipy.ndimage.filters import gaussian_filter
 
-__all__ = ["input_vs_pdf", "input_vs_dpdf", "cdf_vs_epdf", "cdf_vs_ecdf"]
+try:
+    from scipy.special import logsumexp
+except ImportError:
+    from scipy.misc import logsumexp
+
+__all__ = ["input_vs_pdf", "input_vs_dpdf", "cdf_vs_epdf", "cdf_vs_ecdf",
+           "plot2d_network", "plot_node"]
 
 
 def input_vs_pdf(vals, errs, vdict, pdfs, pgrid, weights=None,
                  pdf_wt_thresh=1e-3, pdf_cdf_thresh=2e-4, wt_thresh=1e-3,
-                 cdf_thresh=2e-4, plot_thresh=1., cmap='viridis', smooth=0,
+                 cdf_thresh=2e-4, plot_thresh=0., cmap='viridis', smooth=0,
                  plot_kwargs=None, verbose=False, *args, **kwargs):
     """
     Plot input values vs corresponding PDFs.
@@ -71,7 +77,7 @@ def input_vs_pdf(vals, errs, vdict, pdfs, pgrid, weights=None,
 
     plot_thresh : float, optional
         The threshold used to threshold the colormap when plotting.
-        Default is `1.`.
+        Default is `0.`.
 
     cmap : colormap, optional
         The colormap used when plotting results. Default is `'viridis'`.
@@ -178,7 +184,7 @@ def input_vs_pdf(vals, errs, vdict, pdfs, pgrid, weights=None,
 def input_vs_dpdf(vals, errs, vdict, pdfs, pgrid, pdf_cent, dgrid,
                   weights=None, disp_func=None, disp_args=None,
                   disp_kwargs=None, pdf_wt_thresh=1e-3, pdf_cdf_thresh=2e-4,
-                  wt_thresh=1e-3, cdf_thresh=2e-4, plot_thresh=1.,
+                  wt_thresh=1e-3, cdf_thresh=2e-4, plot_thresh=0.,
                   cmap='viridis', smooth=0, plot_kwargs=None, verbose=False,
                   *args, **kwargs):
     """
@@ -245,7 +251,7 @@ def input_vs_dpdf(vals, errs, vdict, pdfs, pgrid, pdf_cent, dgrid,
 
     plot_thresh : float, optional
         The threshold used to threshold the colormap when plotting.
-        Default is `1.`.
+        Default is `0.`.
 
     cmap : colormap, optional
         The colormap used when plotting results. Default is `'viridis'`.
@@ -421,10 +427,7 @@ def cdf_vs_epdf(vals, errs, pdfs, pdf_grid, Nmc=100, weights=None, Nbins=50,
     for i, (val, err, pdf) in enumerate(zip(vals, errs, pdfs)):
         cdf = pdf.cumsum()
         cdf /= cdf[-1]
-        if err > 0:
-            mcvals = rstate.normal(val, err, size=Nmc)  # Monte Carlo errors
-        else:
-            mcvals = np.tile(val, Nmc)  # tile our inputs
+        mcvals = rstate.normal(val, err, size=Nmc)  # Monte Carlo errors
         cdf_draws[i] = np.interp(mcvals, pdf_grid, cdf)
     cdf_draws = cdf_draws.flatten()
 
@@ -498,10 +501,7 @@ def cdf_vs_ecdf(vals, errs, pdfs, pdf_grid, Nmc=100, weights=None,
     for i, (val, err, pdf) in enumerate(zip(vals, errs, pdfs)):
         cdf = pdf.cumsum()
         cdf /= cdf[-1]
-        if err > 0:
-            mcvals = rstate.normal(val, err, size=Nmc)
-        else:
-            mcvals = np.tile(val, Nmc)
+        mcvals = rstate.normal(val, err, size=Nmc)
         cdf_draws[i] = np.interp(mcvals, pdf_grid, cdf)
     cdf_draws = cdf_draws.flatten()
 
@@ -519,3 +519,255 @@ def cdf_vs_ecdf(vals, errs, pdfs, pdf_grid, Nmc=100, weights=None,
     plt.ylabel('Empirical CDF')
 
     return x, y
+
+
+def plot2d_network(network, counts='weighted', label_name=None,
+                   labels=None, labels_err=None, vals=None, dims=(0, 1),
+                   cmap='viridis',  Nmc=5, point_est='median',
+                   plot_kwargs=None, rstate=None, verbose=True,
+                   *args, **kwargs):
+    """
+    Plot a 2-D projection of the network colored by the chosen variable.
+
+    Parameters
+    ----------
+    network : `~frankenz.networks._Network`-derived object
+        The trained and populated network object.
+
+    counts : {'absolute', 'weighted'}, optional
+        The number density of objects mapped onto the network. If
+        `'absolute'`, the raw number of objects associated with each node
+        will be plotted. If `'weighted'`, the weighted number of objects
+        will be shown. Default is `'weighted'`.
+
+    labels : `~numpy.ndarray` with shape (Nobj), optional
+        The labels we want to project over the network. Will override
+        `counts` if provided.
+
+    label_name : str, optional
+        The name of the label.
+
+    labels_err : `~numpy.ndarray` with shape (Nobj), optional
+        Errors on the labels.
+
+    vals : `~numpy.ndarray` with shape (Nnodes), optional
+        The values to be plotted directly on the network. Overrides
+        `labels`.
+
+    dims : 2-tuple, optional
+        The `(x, y)` dimensions the network should be plotted over. Default is
+        `(0, 1)`.
+
+    cmap : colormap, optional
+        The colormap used when plotting results. Default is `'viridis'`.
+
+    Nmc : int, optional
+        The number of Monte Carlo realizations of the label value(s) if the
+        error(s) are provided. Default is `5`.
+
+    point_est : str or func, optional
+        The point estimator to be plotted. Pre-defined options include
+        `'mean'`, `'median'`, `'std'`, and `'mad'`. If a function is passed,
+        it will be used to compute the weighted point estimate using input
+        of the form `(labels, wts)`. Default is `'median'`.
+
+    plot_kwargs : kwargs, optional
+        Keyword arguments to be passed to `~matplotlib.pyplot.scatter`.
+
+    rstate : `~numpy.random.RandomState` instance, optional
+        Random state instance. If not passed, the default `~numpy.random`
+        instance will be used.
+
+    verbose : bool, optional
+        Whether to print progress. Default is `True`.
+
+    Returns
+    -------
+    vals : `~numpy.ndarray` with shape (Nnodes)
+        Corresponding point estimates for the input labels.
+
+    """
+
+    # Initialize values.
+    if plot_kwargs is None:
+        plot_kwargs = dict()
+    if rstate is None:
+        rstate = np.random
+    if label_name is None and (labels is not None or vals is not None):
+        label_name = 'Node Value'
+    Nnodes = network.NNODE
+    xpos = network.nodes_pos[:, dims[0]]
+    ypos = network.nodes_pos[:, dims[1]]
+
+    # Compute counts.
+    if counts == 'absolute' and labels is None and vals is None:
+        vals = network.nodes_Nmatch
+        if label_name is None:
+            label_name = 'Counts'
+    elif counts == 'weighted' and labels is None and vals is None:
+        vals = np.array([np.exp(logsumexp(logwts))
+                         for logwts in network.nodes_logwts])
+        if label_name is None:
+            label_name = 'Weighted Counts'
+
+    # Compute point estimates.
+    if vals is None and labels is not None:
+        vals = np.zeros(Nnodes)
+        for i in range(Nnodes):
+            # Print progress.
+            if verbose:
+                sys.stderr.write('\rComputing {0} estimate {1}/{2}'
+                                 .format(label_name, i+1, Nnodes))
+                sys.stderr.flush()
+            # Grab relevant objects.
+            idxs, logwts = network.nodes_idxs[i], network.nodes_logwts[i]
+            wts = np.exp(logwts - logsumexp(logwts))  # normalized weights
+            ys = labels[idxs]  # labels
+            Ny = len(ys)
+            # Account for label errors (if provided) using Monte Carlo methods.
+            if labels_err is not None:
+                yes = labels_err[idxs]  # errors
+                ys = rstate.normal(ys, yes, size=(Nmc, Ny)).flatten()
+                wts = np.tile(wts, Nmc) / Nmc
+            if point_est == 'mean':
+                # Compute weighted mean.
+                val = np.dot(wts, ys)
+            elif point_est == 'median':
+                # Compute weighted median.
+                sort_idx = np.argsort(ys)
+                sort_cdf = wts[sort_idx].cumsum()
+                val = np.interp(0.5, sort_cdf, ys[sort_idx])
+            elif point_est == 'std':
+                # Compute weighted std.
+                ymean = np.dot(wts, ys)  # mean
+                val = np.dot(wts, np.square(ys - ymean))
+            elif point_est == 'mad':
+                # Compute weighted MAD.
+                sort_idx = np.argsort(ys)
+                sort_cdf = wts[sort_idx].cumsum()
+                ymed = np.interp(0.5, sort_cdf, ys[sort_idx])  # median
+                dev = np.abs(ys - ymed)  # absolute deviation
+                sort_idx = np.argsort(dev)
+                sort_cdf = wts[sort_idx].cumsum()
+                val = np.interp(0.5, sort_cdf, dev[sort_idx])
+            else:
+                try:
+                    val = point_est(ys, wts)
+                except:
+                    raise RuntimeError("`point_est` function failed!")
+            vals[i] = val
+        if verbose:
+            sys.stderr.write('\n')
+            sys.stderr.flush()
+
+    # Plot results.
+    plt.scatter(xpos, ypos, c=vals, cmap=cmap, **plot_kwargs)
+    plt.xlabel(r'$x_{0}$'.format(str(dims[0])))
+    plt.ylabel(r'$x_{0}$'.format(str(dims[1])))
+    plt.colorbar(label=label_name)
+
+    return vals
+
+
+def plot_node(network, models, models_err, pos=None, idx=None, models_x=None,
+              Nrsamp=1, Nmc=5, node_kwargs=None, violin_kwargs=None,
+              rstate=None, *args, **kwargs):
+    """
+    Plot a 2-D projection of the network colored by the chosen variable.
+
+    Parameters
+    ----------
+    network : `~frankenz.networks._Network`-derived object
+        The trained and populated network object.
+
+    models : `~numpy.ndarray` with shape (Nobj, Ndim)
+        The models mapped onto the network.
+
+    models_err : `~numpy.ndarray` with shape (Nobj, Ndim)
+        Errors on the models.
+
+    pos : tuple of shape (Nproj), optional
+        The `Nproj`-dimensional position of the node. Mutually exclusive with
+        `idx`.
+
+    idx : int, optional
+        Index of the node. Mutually exclusive with `pos`.
+
+    models_x : `~numpy.ndarray` with shape (Ndim), optional
+        The `x` values corresponding to the `Ndim` model values.
+
+    Nrsamp : int, optional
+        Number of times to resample the weighted collection of models
+        associated with the given node. Default is `1`.
+
+    Nmc : int, optional
+        The number of Monte Carlo realizations of the model values if the
+        errors are provided. Default is `5`.
+
+    node_kwargs : kwargs, optional
+        Keyword arguments to be passed to `~matplotlib.pyplot.plot` when
+        plotting the node model.
+
+    violin_kwargs : kwargs, optional
+        Keyword arguments to be passed to `~matplotlib.pyplot.violinplot`
+        when plotting the distribution of model values.
+
+    rstate : `~numpy.random.RandomState` instance, optional
+        Random state instance. If not passed, the default `~numpy.random`
+        instance will be used.
+
+    """
+
+    # Initialize values.
+    if node_kwargs is None:
+        node_kwargs = dict()
+    if violin_kwargs is None:
+        violin_kwargs = dict()
+    if rstate is None:
+        rstate = np.random
+    if idx is None and pos is None:
+        raise ValueError("Either `idx` or `pos` must be specified.")
+    elif idx is not None and pos is not None:
+        raise ValueError("Both `idx` and `pos` cannot be specified.")
+    if models_x is None:
+        models_x = np.arange(models.shape[-1] + 1)
+    node_kwargs['color'] = node_kwargs.get('color', 'black')
+    node_kwargs['marker'] = node_kwargs.get('marker', '*')
+    node_kwargs['markersize'] = node_kwargs.get('markersize', '10')
+    node_kwargs['alpha'] = node_kwargs.get('alpha', 0.6)
+    violin_kwargs['widths'] = violin_kwargs.get('widths', 600)
+    violin_kwargs['showextrema'] = violin_kwargs.get('showextrema', False)
+
+    # Get node.
+    (idx, node_model, pos,
+     idxs, logwts, scales, scales_err) = network.get_node(pos=pos, idx=idx)
+    tmodels, tmodels_err = models[idxs], models_err[idxs]  # grab models
+    wts = np.exp(logwts - logsumexp(logwts))  # compute weights
+
+    # Resample models.
+    Nmatch = len(idxs)
+    idx_rsamp = rstate.choice(Nmatch, p=wts, size=Nmatch*Nrsamp)
+
+    # Perturb model values.
+    tmodels_mc = rstate.normal(tmodels[idx_rsamp], tmodels_err[idx_rsamp])
+
+    # Rescale results.
+    snorm = np.mean(np.array(scales)[idx_rsamp])
+    tmodels_mc /= (np.array(scales)[idx_rsamp, None] / snorm)
+
+    # Rescale baseline model (correction should be small in most cases).
+    mean_model = np.mean(tmodels_mc, axis=0)
+    std_model = np.std(tmodels_mc, axis=0)
+    num = np.dot(mean_model / std_model, node_model / std_model)
+    den = np.dot(node_model / std_model, node_model / std_model)
+    node_scale = num / den
+    if abs(node_scale - 1.) < 0.05:
+        node_scale = 1.
+
+    # Plot results.
+    plt.plot(models_x, node_model * node_scale, **node_kwargs)
+    for i in range(models.shape[-1]):
+        vals = tmodels_mc[:, i]
+        plt.violinplot(vals, [models_x[i]], **violin_kwargs)
+    plt.ylim([min(mean_model - 3 * std_model),
+              max(mean_model + 3 * std_model)])

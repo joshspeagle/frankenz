@@ -369,6 +369,7 @@ class BruteForce():
                 # Otherwise just use KDE.
                 pdf = gauss_kde(model_labels, model_label_errs, label_grid,
                                 y_wt=wt, *kde_args, **kde_kwargs)
+            pdf /= pdf.sum()
 
             yield pdf, (lmap, levid)
 
@@ -627,5 +628,6 @@ class BruteForce():
                 pdf = gauss_kde(model_labels, model_label_errs,
                                 label_grid, y_wt=wt,
                                 *kde_args, **kde_kwargs)
+            pdf /= pdf.sum()
 
             yield pdf, (lmap, levid)

@@ -1,7 +1,6 @@
 frankenz
 =========
-
-A photometric redshift monstrosity. **Alpha release.**
+#### A photometric redshift monstrosity.
 
 **WARNING: This project is under active development and not yet stable.**
 
@@ -21,7 +20,11 @@ Paper forthcoming.
 **Currently nonexistent.** See the demos for examples.
 
 ### Installation
-`frankenz` can be installed by running
+`frankenz` can be installed via
+```
+pip install frankenz
+```
+Alternately, it can also be installed by running
 ```
 python setup.py install
 ```

@@ -553,6 +553,7 @@ class NearestNeighbors():
                 # Otherwise just use KDE.
                 pdf = gauss_kde(model_labels[idxs], model_label_errs[idxs],
                                 label_grid, y_wt=wt, *kde_args, **kde_kwargs)
+            pdf /= pdf.sum()
 
             yield pdf, (lmap, levid)
 
@@ -868,5 +869,6 @@ class NearestNeighbors():
                 pdf = gauss_kde(model_labels[idxs], model_label_errs[idxs],
                                 label_grid, y_wt=wt,
                                 *kde_args, **kde_kwargs)
+            pdf /= pdf.sum()
 
             yield pdf, (lmap, levid)

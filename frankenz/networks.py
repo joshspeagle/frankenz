@@ -172,7 +172,7 @@ class _Network(object):
 
     def populate_network(self, lpnet_func=None, discrete=False,
                          wt_thresh=1e-3, cdf_thresh=2e-4, lpnet_args=None,
-                         lpnet_kwargs=None, track_scale=False, verbose=True):
+                         lpnet_kwargs=None, track_scale=True, verbose=True):
         """
         Map input models onto the nodes of the network.
 
@@ -203,11 +203,12 @@ class _Network(object):
 
         lpnet_kwargs : kwargs, optional
             Keyword arguments to be passed to `lpnet_func`.
-            By default, this sets `free_scale=True`.
+            By default, this sets `free_scale=True`,
+            `ignore_model_err=True`, and `return_scale=True`.
 
         track_scale : bool, optional
             Whether `lpnet_func` also returns the scale-factor. Default is
-            `False`.
+            `True`.
 
         verbose : bool, optional
             Whether to print progress to `~sys.stderr`. Default is `True`.
@@ -220,7 +221,8 @@ class _Network(object):
         if lpnet_args is None:
             lpnet_args = []
         if lpnet_kwargs is None:
-            lpnet_kwargs = {'free_scale': True}
+            lpnet_kwargs = {'free_scale': True, 'ignore_model_err': True,
+                            'return_scale': True}
         if wt_thresh is None and cdf_thresh is None:
             wt_thresh = -np.inf  # default to no clipping/thresholding
 
@@ -247,7 +249,7 @@ class _Network(object):
 
     def _populate_network(self, lpnet_func=None, discrete=False,
                           wt_thresh=1e-3, cdf_thresh=2e-4, lpnet_args=None,
-                          lpnet_kwargs=None, track_scale=False):
+                          lpnet_kwargs=None, track_scale=True):
         """
         Internal generator used by the network to map models onto nodes.
 
@@ -278,11 +280,12 @@ class _Network(object):
 
         lpnet_kwargs : kwargs, optional
             Keyword arguments to be passed to `lpnet_func`.
-            By default, this sets `free_scale=True`.
+            By default, this sets `free_scale=True`,
+            `ignore_model_err=True`, and `return_scale=True`.
 
         track_scale : bool, optional
             Whether `lpnet_func` also returns the scale-factor. Default is
-            `False`.
+            `True`.
 
         """
 
@@ -292,7 +295,8 @@ class _Network(object):
         if lpnet_args is None:
             lpnet_args = []
         if lpnet_kwargs is None:
-            lpnet_kwargs = {'free_scale': True}
+            lpnet_kwargs = {'free_scale': True, 'ignore_model_err': True,
+                            'return_scale': True}
         if wt_thresh is None and cdf_thresh is None:
             wt_thresh = -np.inf  # default to no clipping/thresholding
         self.lpnet_func = lpnet_func
@@ -397,10 +401,11 @@ class _Network(object):
         elif idx is not None and pos is not None:
             raise ValueError("Both `idx` and `pos` cannot be specified.")
         elif pos is not None:
-            idx = np.argmin([(pos - p)**2 for p in self.nodes_pos])
+            idx = np.argmin([sum((pos - p)**2) for p in self.nodes_pos])
 
         return (idx, self.nodes[idx], self.nodes_pos[idx],
-                self.nodes_idxs[idx], self.nodes_logwts[idx])
+                self.nodes_idxs[idx], self.nodes_logwts[idx],
+                self.nodes_scales[idx], self.nodes_scales_err[idx])
 
     def get_pdf(self, idx, model_labels, model_label_errs,
                 label_dict=None, label_grid=None, kde_args=None,
@@ -475,6 +480,7 @@ class _Network(object):
                 # Otherwise just use KDE.
                 pdf = gauss_kde(model_labels[idxs], model_label_errs[idxs],
                                 label_grid, y_wt=wt, *kde_args, **kde_kwargs)
+            pdf /= pdf.sum()
         else:
             lmap, levid = -np.inf, -np.inf
             if label_dict is not None:
@@ -646,6 +652,7 @@ class _Network(object):
                     pdf = gauss_kde(model_labels[idxs], model_label_errs[idxs],
                                     label_grid, y_wt=wt, *kde_args,
                                     **kde_kwargs)
+                pdf /= pdf.sum()
             else:
                 lmap, levid = -np.inf, -np.inf
                 if label_dict is not None:
@@ -1062,6 +1069,7 @@ class _Network(object):
                 # Otherwise, just use KDE to compute the PDF from model fits.
                 pdf = gauss_kde(model_labels[idxs], model_label_errs[idxs],
                                 label_grid, y_wt=wt, *kde_args, **kde_kwargs)
+            pdf /= pdf.sum()
 
             yield pdf, (lmap, levid)
 
@@ -1404,6 +1412,7 @@ class _Network(object):
                 # Otherwise, just use KDE to compute the PDF from model fits.
                 pdf = gauss_kde(model_labels[idxs], model_label_errs[idxs],
                                 label_grid, y_wt=wt, *kde_args, **kde_kwargs)
+            pdf /= pdf.sum()
 
             yield pdf, (lmap, levid)
 
@@ -1514,7 +1523,8 @@ class SelfOrganizingMap(_Network):
 
         lprob_kwargs : kwargs, optional
             Keyword arguments to be passed to `lprob_func`.
-            By default, this sets `free_scale=True`.
+            By default, this sets `free_scale=True` and
+            `ignore_model_err=True`.
 
         track_scale : bool, optional
             Whether `lprob_func` also returns the scale-factor. Default is
@@ -1543,7 +1553,7 @@ class SelfOrganizingMap(_Network):
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
-            lprob_kwargs = {'free_scale': True}
+            lprob_kwargs = {'free_scale': True, 'ignore_model_err': True}
         if learn_func is None:
             learn_func = learn_harmonic
         if learn_args is None:
@@ -1673,7 +1683,8 @@ class SelfOrganizingMap(_Network):
 
         lprob_kwargs : kwargs, optional
             Keyword arguments to be passed to `lprob_func`.
-            By default, this sets `free_scale=True`.
+            By default, this sets `free_scale=True` and
+            `ignore_model_err=True`.
 
         track_scale : bool, optional
             Whether `lprob_func` also returns the scale-factor. Default is
@@ -1701,7 +1712,7 @@ class SelfOrganizingMap(_Network):
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
-            lprob_kwargs = {'free_scale': True}
+            lprob_kwargs = {'free_scale': True, 'ignore_model_err': True}
         if learn_func is None:
             learn_func = learn_harmonic
         if learn_args is None:
@@ -1812,7 +1823,6 @@ class GrowingNeuralGas(_Network):
         # Initialize values.
         super(GrowingNeuralGas, self).__init__(models, models_err,
                                                models_mask)  # _Network
-
         self.graph = nx.Graph()
 
     def train_network(self, models=None, models_err=None, models_mask=None,
@@ -1893,7 +1903,8 @@ class GrowingNeuralGas(_Network):
 
         lprob_args : args, optional
             Arguments to be passed to `lprob_func`.
-            By default, this sets `free_scale=True`.
+            By default, this sets `free_scale=True` and
+            `ignore_model_err=True`.
 
         lprob_kwargs : kwargs, optional
             Keyword arguments to be passed to `lprob_func`.
@@ -1913,7 +1924,7 @@ class GrowingNeuralGas(_Network):
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
-            lprob_kwargs = {'free_scale': True}
+            lprob_kwargs = {'free_scale': True, 'ignore_model_err': True}
         if rstate is None:
             rstate = np.random
 
@@ -2029,7 +2040,8 @@ class GrowingNeuralGas(_Network):
 
         lprob_kwargs : kwargs, optional
             Keyword arguments to be passed to `lprob_func`.
-            By default, this sets `free_scale=True`.
+            By default, this sets `free_scale=True` and
+            `ignore_model_err=True`.
 
         track_scale : bool, optional
             Whether `lprob_func` also returns the scale-factor. Default is
@@ -2043,7 +2055,7 @@ class GrowingNeuralGas(_Network):
         if lprob_args is None:
             lprob_args = []
         if lprob_kwargs is None:
-            lprob_kwargs = {'free_scale': True}
+            lprob_kwargs = {'free_scale': True, 'ignore_model_err': True}
         if rstate is None:
             rstate = np.random
 
