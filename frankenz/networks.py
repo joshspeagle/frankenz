@@ -161,6 +161,7 @@ class _Network(object):
         self.nodes_pos = None
         self.nodes_idxs = None
         self.nodes_logwts = None
+        self.nodes_bmus = None
         self.nodes_scales = None
         self.nodes_scales_err = None
         self.nodes_Nmatch = None
@@ -170,9 +171,9 @@ class _Network(object):
         self.neighbors = None
         self.Nneighbors = None
 
-    def populate_network(self, lpnet_func=None, discrete=False,
-                         wt_thresh=1e-3, cdf_thresh=2e-4, lpnet_args=None,
-                         lpnet_kwargs=None, track_scale=True, verbose=True):
+    def populate_network(self, lpnet_func=None, wt_thresh=1e-3,
+                         cdf_thresh=2e-4, lpnet_args=None, lpnet_kwargs=None,
+                         track_scale=True, verbose=True):
         """
         Map input models onto the nodes of the network.
 
@@ -183,11 +184,6 @@ class _Network(object):
             the network. Must return ln(prior), ln(like),
             ln(post), Ndim, chi2, and (optionally) scale and std(scale).
             If not provided, `~frankenz.pdf.logprob` will be used.
-
-        discrete : bool, optional
-            Whether to map objects back to the best-fitting node **only**,
-            rather than assigning them to multiple nodes along with their
-            relevant weights. Default is `False`.
 
         wt_thresh : float, optional
             The threshold `wt_thresh * max(y_wt)` used to ignore nodes
@@ -231,7 +227,6 @@ class _Network(object):
         percentage = -99
         populate = self._populate_network
         for i, results in enumerate(populate(lpnet_func=lpnet_func,
-                                             discrete=discrete,
                                              wt_thresh=wt_thresh,
                                              cdf_thresh=cdf_thresh,
                                              lpnet_args=lpnet_args,
@@ -247,8 +242,8 @@ class _Network(object):
             sys.stderr.write('\n')
             sys.stderr.flush()
 
-    def _populate_network(self, lpnet_func=None, discrete=False,
-                          wt_thresh=1e-3, cdf_thresh=2e-4, lpnet_args=None,
+    def _populate_network(self, lpnet_func=None, wt_thresh=1e-3,
+                          cdf_thresh=2e-4, lpnet_args=None,
                           lpnet_kwargs=None, track_scale=True):
         """
         Internal generator used by the network to map models onto nodes.
@@ -260,11 +255,6 @@ class _Network(object):
             the network. Must return ln(prior), ln(like),
             ln(post), Ndim, chi2, and (optionally) scale and std(scale).
             If not provided, `~frankenz.pdf.logprob` will be used.
-
-        discrete : bool, optional
-            Whether to map objects back to the best-fitting node **only**,
-            rather than assigning them to multiple nodes along with their
-            relevant weights. Default is `False`.
 
         wt_thresh : float, optional
             The threshold `wt_thresh * max(y_wt)` used to ignore nodes
@@ -306,6 +296,7 @@ class _Network(object):
         Nnodes, Nmodels = self.NNODE, self.NMODEL
         self.nodes_idxs = [[] for i in range(Nnodes)]
         self.nodes_logwts = [[] for i in range(Nnodes)]
+        self.nodes_bmus = [[] for i in range(Nnodes)]
         self.nodes_scales = [[] for i in range(Nnodes)]
         self.nodes_scales_err = [[] for i in range(Nnodes)]
         self.nodes_Nmatch = np.zeros(Nnodes, dtype='int')
@@ -324,21 +315,16 @@ class _Network(object):
             node_lnprob = node_results[2]
 
             # Find the set of node(s) the model maps to.
-            if discrete:
-                # If discrete, assign to the best-matching node.
-                n_idxs = np.array([np.argmax(node_lnprob)])
+            if wt_thresh is not None:
+                # Use relative amplitude to threshold.
+                lwt_min = np.log(wt_thresh) + np.max(node_lnprob)
+                n_idxs = np.arange(Nnodes)[node_lnprob > lwt_min]
             else:
-                # Apply thresholding to get set of probabilistic associations.
-                if wt_thresh is not None:
-                    # Use relative amplitude to threshold.
-                    lwt_min = np.log(wt_thresh) + np.max(node_lnprob)
-                    n_idxs = np.arange(Nnodes)[node_lnprob > lwt_min]
-                else:
-                    # Use CDF to threshold.
-                    idx_sort = np.argsort(node_lnprob)
-                    node_prob = np.exp(node_lnprob - logsumexp(node_lnprob))
-                    node_cdf = np.cumsum(node_prob[idx_sort])
-                    n_idxs = idx_sort[node_cdf <= (1. - cdf_thresh)]
+                # Use CDF to threshold.
+                idx_sort = np.argsort(node_lnprob)
+                node_prob = np.exp(node_lnprob - logsumexp(node_lnprob))
+                node_cdf = np.cumsum(node_prob[idx_sort])
+                n_idxs = idx_sort[node_cdf <= (1. - cdf_thresh)]
             # Compute normalized ln(weights).
             n_lnprobs = node_lnprob[n_idxs]
             n_lmap, n_levid = max(n_lnprobs), logsumexp(n_lnprobs)
@@ -354,17 +340,19 @@ class _Network(object):
                 n_scales_err = np.zeros_like(n_idxs)
 
             # Assign model to node(s).
+            lwt_max = np.max(n_lnprobs)
             for j, lwt, s, serr in zip(n_idxs, n_lnprobs, n_scales,
                                        n_scales_err):
                 self.nodes_idxs[j].append(i)
                 self.nodes_logwts[j].append(lwt)
+                self.nodes_bmus[j].append(lwt == lwt_max)
                 self.nodes_scales[j].append(s)
                 self.nodes_scales_err[j].append(serr)
                 self.nodes_Nmatch[j] += 1
 
             yield n_idxs, n_lnprobs, n_scales, n_scales_err
 
-    def get_node(self, idx=None, pos=None):
+    def get_node(self, idx=None, pos=None, discrete=False):
         """
         Returns quantities associated with the given node.
 
@@ -376,6 +364,11 @@ class _Network(object):
         pos : tuple, optional
             The position that will be used to search for the closest
             node. Mutually exclusive with `idx`.
+
+        discrete : bool, optional
+            Whether to assign weights based **only** on the best-fitting node
+            rather than all nodes an object might be associated with.
+            Default is `False`.
 
         Returns
         -------
@@ -402,14 +395,18 @@ class _Network(object):
             raise ValueError("Both `idx` and `pos` cannot be specified.")
         elif pos is not None:
             idx = np.argmin([sum((pos - p)**2) for p in self.nodes_pos])
+        if discrete:
+            logwts = np.log(self.nodes_bmus + 1e-100)
+        else:
+            logwts = self.nodes_logwts
 
         return (idx, self.nodes[idx], self.nodes_pos[idx],
-                self.nodes_idxs[idx], self.nodes_logwts[idx],
+                self.nodes_idxs[idx], logwts[idx],
                 self.nodes_scales[idx], self.nodes_scales_err[idx])
 
     def get_pdf(self, idx, model_labels, model_label_errs,
                 label_dict=None, label_grid=None, kde_args=None,
-                kde_kwargs=None, return_gof=False):
+                kde_kwargs=None, return_gof=False, discrete=False):
         """
         Returns PDF associated with the given node.
 
@@ -444,6 +441,11 @@ class _Network(object):
             ln(evidence) values for the predictions
             along with the pdfs. Default is `False`.
 
+        discrete : bool, optional
+            Whether to assign weights based **only** on the best-fitting node
+            rather than all nodes an object might be associated with.
+            Default is `False`.
+
         Returns
         -------
         pdf : `~numpy.ndarray` of shape (Ngrid)
@@ -465,7 +467,10 @@ class _Network(object):
         # Compute PDFs.
         Nidx = self.nodes_Nmatch[idx]  # number of models
         idxs = self.nodes_idxs[idx]  # model indices
-        lwt = self.nodes_logwts[idx]  # model ln(wts)
+        if discrete:
+            lwt = np.log(self.nodes_bmus[idx] + 1e-100)  # discrete ln(wts)
+        else:
+            lwt = self.nodes_logwts[idx]  # continuous model ln(wts)
         if Nidx > 0:
             lmap, levid = max(lwt), logsumexp(lwt)  # model GOF metrics
             wt = np.exp(lwt - levid)
@@ -495,7 +500,7 @@ class _Network(object):
 
     def get_pdfs(self, model_labels, model_label_errs, label_dict=None,
                  label_grid=None, kde_args=None, kde_kwargs=None,
-                 return_gof=False, verbose=True):
+                 return_gof=False, discrete=False, verbose=True):
         """
         Compute photometric 1-D predictions to the target distribution
         using the models (and possibly associated weights) to each node in
@@ -528,6 +533,11 @@ class _Network(object):
             Whether to return a tuple containing the ln(MAP) and
             ln(evidence) values for the predictions
             along with the pdfs. Default is `False`.
+
+        discrete : bool, optional
+            Whether to assign weights based **only** on the best-fitting node
+            rather than all nodes an object might be associated with.
+            Default is `False`.
 
         verbose : bool, optional
             Whether to print progress to `~sys.stderr`. Default is `True`.
@@ -565,6 +575,7 @@ class _Network(object):
         for i, res in enumerate(self._get_pdfs(model_labels, model_label_errs,
                                                label_dict=label_dict,
                                                label_grid=label_grid,
+                                               discrete=discrete,
                                                kde_args=kde_args,
                                                kde_kwargs=kde_kwargs)):
             pdf, gof = res
@@ -585,7 +596,8 @@ class _Network(object):
             return pdfs
 
     def _get_pdfs(self, model_labels, model_label_errs, label_dict=None,
-                  label_grid=None, kde_args=None, kde_kwargs=None):
+                  label_grid=None, kde_args=None, kde_kwargs=None,
+                  discrete=False):
         """
         Internal generator used to compute photometric 1-D predictions
         over nodes of the network.
@@ -613,6 +625,11 @@ class _Network(object):
         kde_kwargs : kwargs, optional
             Keyword arguments to be passed to the KDE function.
 
+        discrete : bool, optional
+            Whether to assign weights based **only** on the best-fitting node
+            rather than all nodes an object might be associated with.
+            Default is `False`.
+
         Returns
         -------
         pdf : `~numpy.ndarray` of shape (Ngrid)
@@ -638,7 +655,10 @@ class _Network(object):
         for i in range(Nnodes):
             Nidx = self.nodes_Nmatch[i]  # number of models
             idxs = self.nodes_idxs[i]  # model indices
-            lwt = self.nodes_logwts[i]  # model ln(wts)
+            if discrete:
+                lwt = np.log(self.nodes_bmus[i] + 1e-100)  # discrete ln(wts)
+            else:
+                lwt = self.nodes_logwts[i]  # continuous model ln(wts)
             if Nidx > 0:
                 lmap, levid = max(lwt), logsumexp(lwt)
                 wt = np.exp(lwt - levid)
@@ -664,7 +684,8 @@ class _Network(object):
 
     def fit(self, data, data_err, data_mask, lprob_func=None, nodes_only=False,
             wt_thresh=1e-3, cdf_thresh=2e-4, lprob_args=None,
-            lprob_kwargs=None, track_scale=False, verbose=True):
+            lprob_kwargs=None, track_scale=False, discrete=False,
+            verbose=True):
         """
         Fit input models to the input data to compute the associated
         log-posteriors using the network.
@@ -708,6 +729,11 @@ class _Network(object):
             Whether `lprob_func` also returns the scale-factor. Default is
             `False`.
 
+        discrete : bool, optional
+            Whether to sub-select neighbors based on the best-fitting node
+            rather than all nodes an object might be associated with.
+            Default is `False`.
+
         verbose : bool, optional
             Whether to print progress to `~sys.stderr`. Default is `True`.
 
@@ -733,6 +759,7 @@ class _Network(object):
                                            lprob_args=lprob_args,
                                            lprob_kwargs=lprob_kwargs,
                                            track_scale=track_scale,
+                                           discrete=discrete,
                                            save_fits=True)):
             if verbose:
                 sys.stderr.write('\rFitting object {0}/{1}'.format(i+1, Ndata))
@@ -744,7 +771,7 @@ class _Network(object):
     def _fit(self, data, data_err, data_mask, lprob_func=None,
              nodes_only=False, wt_thresh=1e-3, cdf_thresh=2e-4,
              lprob_args=None, lprob_kwargs=None, track_scale=False,
-             save_fits=True):
+             discrete=False, save_fits=True):
         """
         Internal generator used to compute fits.
 
@@ -786,6 +813,11 @@ class _Network(object):
         track_scale : bool, optional
             Whether `lprob_func` also returns the scale-factor. Default is
             `False`.
+
+        discrete : bool, optional
+            Whether to assign weights based **only** on the best-fitting node
+            rather than all nodes an object might be associated with.
+            Default is `False`.
 
         save_fits : bool, optional
             Whether to save fits internally while computing predictions.
@@ -857,6 +889,7 @@ class _Network(object):
             if nodes_only:
                 # Take our nodes to be our models.
                 results = [nr[wsel] for nr in node_results]
+                idxs, Nidx = sel_arr, len(sel_arr)
                 if save_fits:
                     self.Nneighbors[i] = len(sel_arr)
                     self.neighbors.append(sel_arr)
@@ -864,7 +897,12 @@ class _Network(object):
                 # Unique neighbor selection based on network fits.
                 indices = np.array([idx for sidx in sel_arr
                                     for idx in self.nodes_idxs[sidx]])
-                idxs = unique(indices)
+                if discrete:
+                    sel = np.array([bwt for sidx in sel_arr
+                                    for bwt in self.nodes_bmus[sidx]])
+                    idxs = unique(indices[sel])
+                else:
+                    idxs = unique(indices)
                 Nidx = len(idxs)
                 if save_fits:
                     self.Nneighbors[i] = Nidx
@@ -889,7 +927,7 @@ class _Network(object):
 
     def predict(self, model_labels, model_label_errs, label_dict=None,
                 label_grid=None, logwt=None, kde_args=None, kde_kwargs=None,
-                return_gof=False, verbose=True):
+                return_gof=False, discrete=False, verbose=True):
         """
         Compute photometric 1-D predictions to the target distribution.
 
@@ -924,6 +962,11 @@ class _Network(object):
             Whether to return a tuple containing the ln(MAP) and
             ln(evidence) values for the predictions
             along with the pdfs. Default is `False`.
+
+        discrete : bool, optional
+            Whether to assign weights based **only** on the best-fitting node
+            rather than all nodes an object might be associated with.
+            Default is `False`.
 
         verbose : bool, optional
             Whether to print progress to `~sys.stderr`. Default is `True`.
@@ -967,7 +1010,8 @@ class _Network(object):
                                       label_dict=label_dict,
                                       label_grid=label_grid,
                                       kde_args=kde_args, kde_kwargs=kde_kwargs,
-                                      return_gof=False, verbose=verbose)
+                                      return_gof=False, discrete=discrete,
+                                      verbose=verbose)
         else:
             node_pdfs = None
 
@@ -1078,8 +1122,8 @@ class _Network(object):
                     wt_thresh=1e-3, cdf_thresh=2e-4,
                     label_dict=None, label_grid=None, kde_args=None,
                     kde_kwargs=None, lprob_args=None, lprob_kwargs=None,
-                    return_gof=False, track_scale=False, verbose=True,
-                    save_fits=True):
+                    return_gof=False, track_scale=False, discrete=False,
+                    verbose=True, save_fits=True):
         """
         Fit input models to the input data to compute the associated
         log-posteriors and 1-D predictions using the network.
@@ -1149,6 +1193,11 @@ class _Network(object):
             Whether `lprob_func` also returns the scale-factor. Default is
             `False`.
 
+        discrete : bool, optional
+            Whether to assign weights based **only** on the best-fitting node
+            rather than all nodes an object might be associated with.
+            Default is `False`.
+
         verbose : bool, optional
             Whether to print progress to `~sys.stderr`. Default is `True`.
 
@@ -1186,7 +1235,7 @@ class _Network(object):
             self.nodes_only = True
             node_pdfs = self.get_pdfs(model_labels, model_label_errs,
                                       label_dict=label_dict,
-                                      label_grid=label_grid,
+                                      label_grid=label_grid, discrete=discrete,
                                       kde_args=kde_args, kde_kwargs=kde_kwargs,
                                       return_gof=False, verbose=verbose)
         else:
@@ -1208,6 +1257,7 @@ class _Network(object):
                                                   lprob_args=lprob_args,
                                                   lprob_kwargs=lprob_kwargs,
                                                   track_scale=track_scale,
+                                                  discrete=discrete,
                                                   save_fits=save_fits)):
             pdf, gof = res
             pdfs[i] = pdf
@@ -1231,7 +1281,7 @@ class _Network(object):
                      wt_thresh=1e-3, cdf_thresh=2e-4,
                      label_dict=None, label_grid=None, kde_args=None,
                      kde_kwargs=None, lprob_args=None, lprob_kwargs=None,
-                     track_scale=False, save_fits=True):
+                     track_scale=False, discrete=False, save_fits=True):
         """
         Internal generator used to fit and compute predictions.
 
@@ -1295,6 +1345,11 @@ class _Network(object):
         track_scale : bool, optional
             Whether `lprob_func` also returns the scale-factor. Default is
             `False`.
+
+        discrete : bool, optional
+            Whether to assign weights based **only** on the best-fitting node
+            rather than all nodes an object might be associated with.
+            Default is `False`.
 
         save_fits : bool, optional
             Whether to save fits internally while computing predictions.
@@ -1374,7 +1429,12 @@ class _Network(object):
                 # Unique neighbor selection based on network fits.
                 indices = np.array([idx for sidx in sel_arr
                                     for idx in self.nodes_idxs[sidx]])
-                idxs = unique(indices)
+                if discrete:
+                    sel = np.array([bwt for sidx in sel_arr
+                                    for bwt in self.nodes_bmus[sidx]])
+                    idxs = unique(indices[sel])
+                else:
+                    idxs = unique(indices)
                 Nidx = len(idxs)
                 if save_fits:
                     self.Nneighbors[i] = Nidx
@@ -1385,6 +1445,7 @@ class _Network(object):
                                      self.models_err[idxs],
                                      self.models_mask[idxs],
                                      *lprob_args, **lprob_kwargs)
+
             if save_fits:
                 self.fit_lnprior.append(results[0])  # ln(prior)
                 self.fit_lnlike.append(results[1])  # ln(like)

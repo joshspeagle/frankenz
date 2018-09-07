@@ -306,6 +306,10 @@ def loglike(data, data_err, data_mask, models, models_err, models_mask,
 
     """
 
+    # Clean data (safety checks).
+    clean = np.isfinite(data) & np.isfinite(data_err) & (data_err > 0.)
+    data[~clean], data_err[~clean], data_mask[~clean] = 0., 1., False
+
     if free_scale:
         results = _loglike_s(data, data_err, data_mask, models, models_err,
                              models_mask, ignore_model_err=ignore_model_err,

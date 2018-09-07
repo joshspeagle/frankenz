@@ -523,8 +523,8 @@ def cdf_vs_ecdf(vals, errs, pdfs, pdf_grid, Nmc=100, weights=None,
 
 def plot2d_network(network, counts='weighted', label_name=None,
                    labels=None, labels_err=None, vals=None, dims=(0, 1),
-                   cmap='viridis',  Nmc=5, point_est='median',
-                   plot_kwargs=None, rstate=None, verbose=True,
+                   cmap='viridis', Nmc=5, point_est='median',
+                   plot_kwargs=None, rstate=None, discrete=False, verbose=True,
                    *args, **kwargs):
     """
     Plot a 2-D projection of the network colored by the chosen variable.
@@ -578,6 +578,11 @@ def plot2d_network(network, counts='weighted', label_name=None,
         Random state instance. If not passed, the default `~numpy.random`
         instance will be used.
 
+    discrete : bool, optional
+        Whether to assign weights based **only** on the best-fitting node
+        rather than all nodes an object might be associated with.
+        Default is `False`.
+
     verbose : bool, optional
         Whether to print progress. Default is `True`.
 
@@ -620,7 +625,11 @@ def plot2d_network(network, counts='weighted', label_name=None,
                                  .format(label_name, i+1, Nnodes))
                 sys.stderr.flush()
             # Grab relevant objects.
-            idxs, logwts = network.nodes_idxs[i], network.nodes_logwts[i]
+            idxs = network.nodes_idxs[i]
+            if discrete:
+                logwts = np.log(network.nodes_bmus[i] + 1e-100)
+            else:
+                logwts = network.nodes_logwts[i]
             wts = np.exp(logwts - logsumexp(logwts))  # normalized weights
             ys = labels[idxs]  # labels
             Ny = len(ys)
@@ -671,7 +680,7 @@ def plot2d_network(network, counts='weighted', label_name=None,
 
 def plot_node(network, models, models_err, pos=None, idx=None, models_x=None,
               Nrsamp=1, Nmc=5, node_kwargs=None, violin_kwargs=None,
-              rstate=None, *args, **kwargs):
+              rstate=None, discrete=False, *args, **kwargs):
     """
     Plot a 2-D projection of the network colored by the chosen variable.
 
@@ -716,6 +725,11 @@ def plot_node(network, models, models_err, pos=None, idx=None, models_x=None,
         Random state instance. If not passed, the default `~numpy.random`
         instance will be used.
 
+    discrete : bool, optional
+        Whether to assign weights based **only** on the best-fitting node
+        rather than all nodes an object might be associated with.
+        Default is `False`.
+
     """
 
     # Initialize values.
@@ -730,7 +744,7 @@ def plot_node(network, models, models_err, pos=None, idx=None, models_x=None,
     elif idx is not None and pos is not None:
         raise ValueError("Both `idx` and `pos` cannot be specified.")
     if models_x is None:
-        models_x = np.arange(models.shape[-1] + 1)
+        models_x = np.arange(models.shape[-1]) + 1
     node_kwargs['color'] = node_kwargs.get('color', 'black')
     node_kwargs['marker'] = node_kwargs.get('marker', '*')
     node_kwargs['markersize'] = node_kwargs.get('markersize', '10')
@@ -740,7 +754,8 @@ def plot_node(network, models, models_err, pos=None, idx=None, models_x=None,
 
     # Get node.
     (idx, node_model, pos,
-     idxs, logwts, scales, scales_err) = network.get_node(pos=pos, idx=idx)
+     idxs, logwts, scales, scales_err) = network.get_node(pos=pos, idx=idx,
+                                                          discrete=discrete)
     tmodels, tmodels_err = models[idxs], models_err[idxs]  # grab models
     wts = np.exp(logwts - logsumexp(logwts))  # compute weights
 

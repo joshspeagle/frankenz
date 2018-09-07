@@ -63,8 +63,6 @@ class BruteForce():
         self.fit_scale = None
         self.fit_scale_err = None
 
-        self.NMODEL, self.NDIM = models.shape
-
     def fit(self, data, data_err, data_mask, lprob_func=None,
             lprob_args=None, lprob_kwargs=None, track_scale=False,
             verbose=True):
