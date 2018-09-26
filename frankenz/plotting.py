@@ -162,7 +162,7 @@ def input_vs_pdf(vals, errs, vdict, pdfs, pgrid, weights=None,
         sys.stderr.flush()
 
     # Smooth results.
-    if smooth > 0:
+    if smooth != 0:
         stack = gaussian_filter(stack, smooth)
 
     # plot results
@@ -347,7 +347,7 @@ def input_vs_dpdf(vals, errs, vdict, pdfs, pgrid, pdf_cent, dgrid,
         sys.stderr.flush()
 
     # Smooth results.
-    if smooth > 0:
+    if smooth != 0:
         stack = gaussian_filter(stack, smooth)
 
     # plot results

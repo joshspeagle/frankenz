@@ -21,6 +21,7 @@ import warnings
 from scipy.spatial import KDTree
 from pandas import unique
 import networkx as nx
+import heapq
 
 from .pdf import *
 
@@ -314,6 +315,10 @@ class _Network(object):
                                       *lpnet_args, **lpnet_kwargs)
             node_lnprob = node_results[2]
 
+            # Add to BMU.
+            bmu = np.argmax(node_lnprob)
+            self.nodes_bmus[bmu].append(i)
+
             # Find the set of node(s) the model maps to.
             if wt_thresh is not None:
                 # Use relative amplitude to threshold.
@@ -327,7 +332,7 @@ class _Network(object):
                 n_idxs = idx_sort[node_cdf <= (1. - cdf_thresh)]
             # Compute normalized ln(weights).
             n_lnprobs = node_lnprob[n_idxs]
-            n_lmap, n_levid = max(n_lnprobs), logsumexp(n_lnprobs)
+            n_lmap, n_levid = np.max(n_lnprobs), logsumexp(n_lnprobs)
             n_lnprobs -= n_levid
             self.models_lmap[i] = n_lmap
             self.models_levid[i] = n_levid
@@ -340,12 +345,10 @@ class _Network(object):
                 n_scales_err = np.zeros_like(n_idxs)
 
             # Assign model to node(s).
-            lwt_max = np.max(n_lnprobs)
             for j, lwt, s, serr in zip(n_idxs, n_lnprobs, n_scales,
                                        n_scales_err):
                 self.nodes_idxs[j].append(i)
                 self.nodes_logwts[j].append(lwt)
-                self.nodes_bmus[j].append(lwt == lwt_max)
                 self.nodes_scales[j].append(s)
                 self.nodes_scales_err[j].append(serr)
                 self.nodes_Nmatch[j] += 1
@@ -396,13 +399,15 @@ class _Network(object):
         elif pos is not None:
             idx = np.argmin([sum((pos - p)**2) for p in self.nodes_pos])
         if discrete:
-            logwts = np.log(self.nodes_bmus + 1e-100)
+            idxs = self.nodes_bmus[idx]
+            logwts = np.zeros_like(idxs)
         else:
-            logwts = self.nodes_logwts
+            idxs = self.nodes_idxs[idx]
+            logwts = self.nodes_logwts[idx]
 
         return (idx, self.nodes[idx], self.nodes_pos[idx],
-                self.nodes_idxs[idx], logwts[idx],
-                self.nodes_scales[idx], self.nodes_scales_err[idx])
+                idxs, logwts, self.nodes_scales[idx],
+                self.nodes_scales_err[idx])
 
     def get_pdf(self, idx, model_labels, model_label_errs,
                 label_dict=None, label_grid=None, kde_args=None,
@@ -465,11 +470,13 @@ class _Network(object):
             raise ValueError("`label_dict` or `label_grid` must be specified.")
 
         # Compute PDFs.
-        Nidx = self.nodes_Nmatch[idx]  # number of models
-        idxs = self.nodes_idxs[idx]  # model indices
         if discrete:
-            lwt = np.log(self.nodes_bmus[idx] + 1e-100)  # discrete ln(wts)
+            idxs = self.nodes_bmus[idx]  # model indices
+            Nidx = len(idxs)  # number of models
+            lwt = np.zeros(Nidx)  # discrete ln(wts)
         else:
+            idxs = self.nodes_idxs[idx]
+            Nidx = self.nodes_Nmatch[idx]
             lwt = self.nodes_logwts[idx]  # continuous model ln(wts)
         if Nidx > 0:
             lmap, levid = max(lwt), logsumexp(lwt)  # model GOF metrics
@@ -485,7 +492,8 @@ class _Network(object):
                 # Otherwise just use KDE.
                 pdf = gauss_kde(model_labels[idxs], model_label_errs[idxs],
                                 label_grid, y_wt=wt, *kde_args, **kde_kwargs)
-            pdf /= pdf.sum()
+            pdf /= pdf.sum()  # normalize
+            pdf *= np.exp(levid)  # scale to associated object density
         else:
             lmap, levid = -np.inf, -np.inf
             if label_dict is not None:
@@ -653,11 +661,13 @@ class _Network(object):
 
         # Compute PDFs.
         for i in range(Nnodes):
-            Nidx = self.nodes_Nmatch[i]  # number of models
-            idxs = self.nodes_idxs[i]  # model indices
             if discrete:
-                lwt = np.log(self.nodes_bmus[i] + 1e-100)  # discrete ln(wts)
+                idxs = self.nodes_bmus[i]  # model indices
+                Nidx = len(idxs)  # number of models
+                lwt = np.zeros(Nidx)  # discrete ln(wts)
             else:
+                idxs = self.nodes_idxs[i]
+                Nidx = self.nodes_Nmatch[i]
                 lwt = self.nodes_logwts[i]  # continuous model ln(wts)
             if Nidx > 0:
                 lmap, levid = max(lwt), logsumexp(lwt)
@@ -672,7 +682,8 @@ class _Network(object):
                     pdf = gauss_kde(model_labels[idxs], model_label_errs[idxs],
                                     label_grid, y_wt=wt, *kde_args,
                                     **kde_kwargs)
-                pdf /= pdf.sum()
+                pdf /= pdf.sum()  # normalize
+                pdf *= np.exp(levid)  # scale to associated object density
             else:
                 lmap, levid = -np.inf, -np.inf
                 if label_dict is not None:
@@ -895,14 +906,13 @@ class _Network(object):
                     self.neighbors.append(sel_arr)
             else:
                 # Unique neighbor selection based on network fits.
-                indices = np.array([idx for sidx in sel_arr
-                                    for idx in self.nodes_idxs[sidx]])
                 if discrete:
-                    sel = np.array([bwt for sidx in sel_arr
-                                    for bwt in self.nodes_bmus[sidx]])
-                    idxs = unique(indices[sel])
+                    indices = np.array([idx for sidx in sel_arr
+                                        for idx in self.nodes_bmus[sidx]])
                 else:
-                    idxs = unique(indices)
+                    indices = np.array([idx for sidx in sel_arr
+                                        for idx in self.nodes_idxs[sidx]])
+                idxs = unique(indices)
                 Nidx = len(idxs)
                 if save_fits:
                     self.Nneighbors[i] = Nidx
@@ -1427,14 +1437,13 @@ class _Network(object):
                     self.neighbors.append(np.array(idxs))
             else:
                 # Unique neighbor selection based on network fits.
-                indices = np.array([idx for sidx in sel_arr
-                                    for idx in self.nodes_idxs[sidx]])
                 if discrete:
-                    sel = np.array([bwt for sidx in sel_arr
-                                    for bwt in self.nodes_bmus[sidx]])
-                    idxs = unique(indices[sel])
+                    indices = np.array([idx for sidx in sel_arr
+                                        for idx in self.nodes_bmus[sidx]])
                 else:
-                    idxs = unique(indices)
+                    indices = np.array([idx for sidx in sel_arr
+                                        for idx in self.nodes_idxs[sidx]])
+                idxs = unique(indices)
                 Nidx = len(idxs)
                 if save_fits:
                     self.Nneighbors[i] = Nidx
@@ -2134,7 +2143,7 @@ class GrowingNeuralGas(_Network):
 
         # Initialize models.
         self.NNODE = self.graph.number_of_nodes()
-        node_idxs = self.graph.nodes()  # grab node indices
+        node_idxs = list(self.graph.nodes())  # grab node indices
         for count, i in enumerate(node_idxs):
             self.graph.add_node(i, count=count)  # add counter labels
         npos = nx.get_node_attributes(self.graph, 'pos')
@@ -2164,32 +2173,32 @@ class GrowingNeuralGas(_Network):
                 self.nodes *= node_scales[:, None]  # re-scale node models
 
             # Find the "best-matching unit" (BMU) and its closest competitor.
-            idx_sort = np.argsort(node_lnprob)
-            y_bmu, bmu = idx_sort[-1], node_idxs[idx_sort[-1]]
-            bmu2 = node_idxs[idx_sort[-2]]
+            y_bmu, y_bmu2 = heapq.nlargest(2, range(len(node_lnprob)),
+                                           key=node_lnprob.__getitem__)
+            bmu, bmu2 = node_idxs[y_bmu], node_idxs[y_bmu2]
 
             # Update the BMU.
-            resid = x - self.graph.node[bmu]['pos']
+            resid = x - self.graph.nodes[bmu]['pos']
             y[y_bmu] += learn_best * resid
-            self.graph.node[bmu]['pos'] += learn_best * resid  # update pos
-            self.graph.node[bmu]['error'] += node_chi2[y_bmu]  # add error
+            self.graph.nodes[bmu]['pos'] += learn_best * resid  # update pos
+            self.graph.nodes[bmu]['error'] += node_chi2[y_bmu]  # add error
 
             # Update the connection between BMU and BMU2.
             try:
-                self.graph.edge[bmu][bmu2]['age'] = 0  # rejuvenate edge
+                self.graph.edges[bmu, bmu2]['age'] = 0  # rejuvenate edge
             except:
                 self.graph.add_edge(bmu, bmu2, age=0)  # add edge
                 pass
 
             # Update the topological neighbors of the BMU.
-            neighbors = self.graph.neighbors(bmu)
+            neighbors = list(self.graph.neighbors(bmu))
             for neighbor in neighbors:
-                y_nbr = self.graph.node[neighbor]['count']
-                resid = x - self.graph.node[neighbor]['pos']
+                y_nbr = self.graph.nodes[neighbor]['count']
+                resid = x - self.graph.nodes[neighbor]['pos']
                 y[y_nbr] += learn_neighbor * resid
-                self.graph.node[neighbor]['pos'] += learn_neighbor * resid
-                self.graph.edge[bmu][neighbor]['age'] += 1  # age edge
-                if self.graph.edge[bmu][neighbor]['age'] == max_age:
+                self.graph.nodes[neighbor]['pos'] += learn_neighbor * resid
+                self.graph.edges[bmu, neighbor]['age'] += 1  # age edge
+                if self.graph.edges[bmu, neighbor]['age'] == max_age:
                     prune_edges.append((bmu, neighbor))
 
             # End of batch.
@@ -2201,9 +2210,9 @@ class GrowingNeuralGas(_Network):
                     try:
                         self.graph.remove_edge(e1, e2)
                         # Remove any nodes that become disconnected.
-                        if not self.graph.neighbors(e1):
+                        if not list(self.graph.neighbors(e1)):
                             self.graph.remove_node(e1)
-                        if not self.graph.neighbors(e2):
+                        if not list(self.graph.neighbors(e2)):
                             self.graph.remove_node(e2)
                     except:
                         pass
@@ -2216,16 +2225,16 @@ class GrowingNeuralGas(_Network):
                     errors = np.array([er for er in iteritems(errors)])
                     e1_idx = int(errors[np.argmax(errors[:, 1]), 0])
                     # Find the neighbor with the largest cumulative error.
-                    e1_nbrs = self.graph.neighbors(e1_idx)
-                    e2_idx = e1_nbrs[np.argmax([self.graph.node[t]['error']
+                    e1_nbrs = list(self.graph.neighbors(e1_idx))
+                    e2_idx = e1_nbrs[np.argmax([self.graph.nodes[t]['error']
                                                 for t in e1_nbrs])]
                     # Adjust errors.
-                    self.graph.node[e1_idx]['error'] *= (1. - new_err_dec)
-                    self.graph.node[e2_idx]['error'] *= (1. - new_err_dec)
+                    self.graph.nodes[e1_idx]['error'] *= (1. - new_err_dec)
+                    self.graph.nodes[e2_idx]['error'] *= (1. - new_err_dec)
                     # Insert new node halfway between `e1_idx` and `e2_idx`.
-                    new_pos = 0.5 * (self.graph.node[e1_idx]['pos'] +
-                                     self.graph.node[e2_idx]['pos'])
-                    new_err = self.graph.node[e1_idx]['error']
+                    new_pos = 0.5 * (self.graph.nodes[e1_idx]['pos'] +
+                                     self.graph.nodes[e2_idx]['pos'])
+                    new_err = self.graph.nodes[e1_idx]['error']
                     new_idx = nnode_init + int(i/nbatch)
                     self.graph.add_node(new_idx, pos=new_pos, error=new_err)
                     # Modify immediate edges.
@@ -2235,7 +2244,7 @@ class GrowingNeuralGas(_Network):
 
                 # Re-initialize models.
                 self.NNODE = self.graph.number_of_nodes()
-                node_idxs = self.graph.nodes()  # grab node indices
+                node_idxs = list(self.graph.nodes())  # grab node indices
                 [self.graph.add_node(i, count=count)
                  for count, i in enumerate(node_idxs)]  # add counter labels
                 npos = nx.get_node_attributes(self.graph, 'pos')
@@ -2245,7 +2254,7 @@ class GrowingNeuralGas(_Network):
                 ym = np.ones_like(y, dtype='bool')
 
             # Decrease the cumulative errors within each node.
-            for j in self.graph.nodes():
-                self.graph.node[j]['error'] *= (1. - all_err_dec)
+            for j in list(self.graph.nodes()):
+                self.graph.nodes[j]['error'] *= (1. - all_err_dec)
 
             yield node_results, bmu, self.NNODE, nprune
