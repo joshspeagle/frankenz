@@ -9,3 +9,4 @@ Feedback:
 - [Alexie Leauthaud](https://github.com/alexieleauthaud)
 - [Hiranya Peiris](https://github.com/hiranyapeiris)
 - Daniel Mortlock
+- [Alex Malz](https://github.com/aimalz)

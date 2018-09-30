@@ -20,7 +20,8 @@ import warnings
 __all__ = ["loglike_nz", "population_sampler"]
 
 
-def loglike_nz(nz, pdfs):
+def loglike_nz(nz, pdfs, overlap=None, return_overlap=False,
+               pair=None, pair_step=None):
     """
     Compute the log-likelihood for the provided population redshift
     distribution `nz` given a collection of PDFs `pdfs`. Assumes that the
@@ -34,6 +35,21 @@ def loglike_nz(nz, pdfs):
     pdfs : `~numpy.ndarray` of shape `(Nobs, Nbins,)`
         The individual redshift PDFs that make up the sample.
 
+    overlap : `~numpy.ndarray` of shape `(Nobs,)`
+        The overlap integrals (sums) between `pdfs` and `nz`. If not provided,
+        these will be computed.
+
+    return_overlap : bool, optional
+        Whether to return the overlap integrals. Default is `False`.
+
+    pair : 2-tuple, optional
+        A pair of indices `(i, j)` corresponding to a pair of bins that will
+        be perturbed by `pair_step`.
+
+    pair_step : float, optional
+        The amount by which to perturb the provided pair `(i, j)` in the
+        `(+, -)` direction, respectively.
+
     Returns
     -------
     loglike : float
@@ -42,13 +58,25 @@ def loglike_nz(nz, pdfs):
     """
 
     # Check for negative values.
-    if np.any(nz < 0.):
-        lnlike = -np.inf
+    perturb = 0.
+    if np.any(~np.isfinite(nz) | (nz < 0.)):
+        lnlike, overlap = -np.inf, np.zeros(len(pdfs))
     else:
+        # Compute overlap.
+        if overlap is None:
+            overlap = np.dot(pdfs, nz)
+        # Compute perturbation from pair.
+        if pair is not None:
+            i, j = pair
+            if pair_step is not None:
+                perturb = pair_step * (pdfs[:, i] - pdfs[:, j])
         # Compute log-likelihood.
-        lnlike = np.sum(np.log(np.dot(pdfs, nz)))
+        lnlike = np.sum(np.log(overlap + perturb))
 
-    return lnlike
+    if return_overlap:
+        return lnlike, overlap + perturb
+    else:
+        return lnlike
 
 
 class population_sampler(object):
@@ -87,7 +115,7 @@ class population_sampler(object):
         return np.array(self.samples), np.array(self.samples_lnp)
 
     def run_mcmc(self, Niter, logprior_nz=None, pos_init=None,
-                 thin=None, mh_steps=5, rstate=None, verbose=True,
+                 thin=400, mh_steps=3, rstate=None, verbose=True,
                  prior_args=[], prior_kwargs={}):
         """
         Sample the distribution using MH-in-Gibbs MCMC.
@@ -108,11 +136,11 @@ class population_sampler(object):
 
         thin : int, optional
             The number of Gibbs samples (over random pairs) to draw
-            before saving a sample. Default is `Ndim`.
+            before saving a sample. Default is `400`.
 
         mh_steps : int, optional
             The number of Metropolis-Hastings proposals within each Gibbs
-            iteration. Default is `10`.
+            iteration. Default is `3`.
 
         rstate : `~numpy.random.RandomState`
             `~numpy.random.RandomState` instance.
@@ -132,7 +160,7 @@ class population_sampler(object):
         # Initialize values.
         Nobs, Ndim = self.pdfs.shape
         if thin is None:
-            thin = Ndim
+            thin = 400
         if rstate is None:
             rstate = np.random
 
@@ -171,9 +199,10 @@ class population_sampler(object):
             if verbose:
                 sys.stderr.write('\r Sample {:d}/{:d} [lnpost = {:6.3f}]      '
                                  .format(i+1, Niter, lnp))
+                sys.stderr.flush()
 
-    def sample(self, Niter, logprior_nz=None, pos_init=None, thin=None,
-               mh_steps=5, rstate=None, prior_args=[], prior_kwargs={}):
+    def sample(self, Niter, logprior_nz=None, pos_init=None, thin=400,
+               mh_steps=3, rstate=None, prior_args=[], prior_kwargs={}):
         """
         Internal generator used for MH-in-Gibbs MCMC sampling.
 
@@ -193,11 +222,11 @@ class population_sampler(object):
 
         thin : int, optional
             The number of Gibbs samples (over random pairs) to draw
-            before saving a sample. Default is `Ndim`.
+            before saving a sample. Default is `400`.
 
         mh_steps : int, optional
             The number of Metropolis-Hastings proposals within each Gibbs
-            iteration. Default is `10`.
+            iteration. Default is `3`.
 
         rstate : `~numpy.random.RandomState`
             `~numpy.random.RandomState` instance.
@@ -217,7 +246,7 @@ class population_sampler(object):
         # Initialize values.
         Nobs, Ndim = self.pdfs.shape
         if thin is None:
-            thin = Ndim
+            thin = 400
         if rstate is None:
             rstate = np.random
 
@@ -231,7 +260,7 @@ class population_sampler(object):
             pos = self.pdfs.sum(axis=0) / self.pdfs.sum()
         else:
             pos = pos_init
-        lnlike = loglike_nz(pos, self.pdfs)
+        lnlike, overlap = loglike_nz(pos, self.pdfs, return_overlap=True)
         lnprior = logprior_nz(pos, *prior_args, **prior_kwargs)
         lnpost = lnlike + lnprior
 
@@ -248,10 +277,12 @@ class population_sampler(object):
                 # Compute absolute range.
                 scale = 1e-4 * np.min(np.append(pos[pair], 1. - pos[pair]))
                 # Compute numerical gradient.
-                lnp1 = loglike_nz(pos + t*scale/2., self.pdfs)
+                lnp1 = loglike_nz(pos, self.pdfs, overlap=overlap,
+                                  pair=pair, pair_step=scale/2.)
                 lnp1 += logprior_nz(pos + t*scale/2.,
                                     *prior_args, **prior_kwargs)
-                lnp2 = loglike_nz(pos - t*scale/2., self.pdfs)
+                lnp2 = loglike_nz(pos, self.pdfs, overlap=overlap,
+                                  pair=pair, pair_step=-scale/2.)
                 lnp2 += logprior_nz(pos - t*scale/2.,
                                     *prior_args, **prior_kwargs)
                 grad = (lnp1 - lnp2) / scale
@@ -264,13 +295,17 @@ class population_sampler(object):
                     z = rstate.randn() * gscale
                     # Generate new proposal.
                     pos_new = pos + (t * z)
-                    lnlike_new = loglike_nz(pos_new, self.pdfs)
+                    lnlike_new, overlap_new = loglike_nz(pos_new, self.pdfs,
+                                                         overlap=overlap,
+                                                         return_overlap=True,
+                                                         pair=pair,
+                                                         pair_step=z)
                     lnprior_new = logprior_nz(pos_new,
                                               *prior_args, **prior_kwargs)
                     lnpost_new = lnlike_new + lnprior_new
                     # Metropolis update.
                     if -rstate.exponential() < lnpost_new - lnpost:
-                        pos, lnpost = pos_new, lnpost_new
+                        pos, lnpost, overlap = pos_new, lnpost_new, overlap_new
 
             # Return current position.
             yield pos, lnpost

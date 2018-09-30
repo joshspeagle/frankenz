@@ -8,23 +8,20 @@ frankenz
 yet robustly perform (hierarchical) Bayesian inference using large
 (but discrete) sets of (possibly noisy) models with (noisy) photometric data.
 The code also contains a number of additional utilities, including:
-- a module for generating quick mocks (along with filter curves and SEDs), 
+- a module for generating quick mocks (along with filter curves and SEDs),
 - several manifold-learning algorithms,
 - a flexible set of photometric likelihoods,
-- fast kernel density estimation, and
-- PDF-oriented plotting utilities.
+- fast kernel density estimation,
+- PDF-oriented plotting/processing functions, and
+- population/hierarchical inference methods.
 
-Paper forthcoming.
+Paper forthcoming (Speagle et al. in prep.).
 
 ### Documentation
 **Currently nonexistent.** See the demos for examples.
 
 ### Installation
-`frankenz` can be installed via
-```
-pip install frankenz
-```
-Alternately, it can also be installed by running
+`frankenz` can be installed by running
 ```
 python setup.py install
 ```
